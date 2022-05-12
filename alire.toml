@@ -1,0 +1,7 @@
+name = "x509ada"
+description = "Shiny new project"
+version = "0.0.0"
+
+authors = ["Your Name"]
+maintainers = ["Your Name <example@example.com>"]
+maintainers-logins = ["github-username"]
