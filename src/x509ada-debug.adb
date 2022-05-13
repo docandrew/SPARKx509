@@ -1,4 +1,3 @@
-with Interfaces; use Interfaces;
 with Ada.Text_IO; use Ada.Text_IO;
 
 package body x509Ada.Debug is
@@ -22,6 +21,13 @@ package body x509Ada.Debug is
       'E',
       'F'
    );
+
+   procedure PB (X : in Unsigned_8)
+   is
+   begin
+      Put (BToC (Byte (X / 16)));
+      Put (BToC (Byte (X mod 16)));
+   end PB;
 
    procedure PB (X : in Byte)
    is

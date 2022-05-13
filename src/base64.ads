@@ -27,7 +27,7 @@ is
          (if Base64_String'Length > 2 and then
             Base64_String (Base64_String'Last - 1) = '=' then
             Base64_String (Base64_String'Last) = '=') and
-         --  No negative indices
+         --  Only positive indices
          Base64_String'First = 1;
 
    ---------------------------------------------------------------------------
