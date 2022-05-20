@@ -28,6 +28,8 @@ procedure ASN1_Tests is
    Cert : ASN1.Certificate;
 
 begin
+   New_Line;
    Parse_Certificate (Decode (Construct (PEM1)), Cert);
+   New_Line;
    Parse_Certificate (Decode (Construct (PEM2)), Cert);
 end ASN1_Tests;

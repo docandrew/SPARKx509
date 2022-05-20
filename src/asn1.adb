@@ -1,5 +1,7 @@
+
 with Ada.Text_IO; use Ada.Text_IO;
 
+with OID;
 with X509Ada.Debug; use X509Ada.Debug;
 
 package body ASN1 with
@@ -90,7 +92,7 @@ is
       end if;
 
       if Character'Pos (Cert_Slice (Index)) /= TYPE_SEQUENCE then
-         Put_Line ("FATAL: Expected Sequence Data at " &
+         Put_Line ("FATAL: Expected a Sequence at " &
                     Index'Image &
                     " found byte" & 
                     Character'Pos (Cert_Slice (Index))'Image &
@@ -105,6 +107,41 @@ is
       Parse_Size (Cert_Slice, Index, Size, Cert);
       Put_Line (" Sequence Size: " & Size'Image);
    end Parse_Sequence_Data;
+
+   --  Fwd declare and contracts
+   procedure Parse_Set (Cert_Slice : String;
+                        Index      : in out Natural;
+                        Size       : out Unsigned_32;
+                        Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+
+   procedure Parse_Set (Cert_Slice : String;
+                        Index      : in out Natural;
+                        Size       : out Unsigned_32;
+                        Cert       : in out Certificate)
+   is
+   begin
+      if not Cert.Valid then
+         Size := 0;
+         return;
+      end if;
+
+      if Character'Pos (Cert_Slice (Index)) /= TYPE_SET then
+         Put_Line ("FATAL: Expected a Set at " &
+                   Index'Image &
+                   " found byte" &
+                   Character'Pos (Cert_Slice (Index))'Image &
+                   " instead.");
+         Cert.Valid := False;
+         Size := 0;
+         return;
+      end if;
+
+      Index := Index + 1;
+
+      Parse_Size (Cert_Slice, Index, Size, Cert);
+      Put_Line (" Set Size: " & Size'Image);
+   end Parse_Set;
 
    --  Fwd declare and contracts
    procedure Parse_Version (Cert_Slice : String;
@@ -212,21 +249,22 @@ is
    --  Fwd declare and contracts
    procedure Parse_Object_Identifier (Cert_Slice : String;
                                       Index      : in out Natural;
-                                      Object_ID  : out Object_Identifier;
+                                      Object_ID  : out OID.Object_ID;
                                       Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
    
    procedure Parse_Object_Identifier (Cert_Slice : String;
                                       Index      : in out Natural;
-                                      Object_ID  : out Object_Identifier;
+                                      Object_ID  : out OID.Object_ID;
                                       Cert       : in out Certificate)
    is
       Num_Octets : Natural;
-      M : Natural;
-      N : Natural;
+
+      use type OID.Object_ID;
    begin
       if Character'Pos (Cert_Slice (Index)) /= TYPE_OBJECTID then
          Put_Line ("FATAL: Expected Object Identifier for Signature Algorithm");
+         Object_ID := OID.Unknown;
          Cert.Valid := False;
          return;
       end if;
@@ -236,20 +274,29 @@ is
       --  Number of octets for object ID follows
       Num_Octets := Character'Pos (Cert_Slice (Index));
 
-      if Num_Octets + Index > Cert_Slice'Last then
+      --  Object ID shouldn't be more than a handful of bytes in an X.509 cert. 
+      --  If the MSb is set, indicating a length > 127, or if it's longer than
+      --  our cert itself, then we balk.
+      if Num_Octets > 127 or Num_Octets + Index > Cert_Slice'Last then
          Put_Line ("FATAL: Object ID too large");
+         Object_ID := OID.UNKNOWN;
          Cert.Valid := False;
          return;
       end if;
 
-
       Index := Index + 1;
 
-      --  First two numbers are combined into one with formula 40m + n.
-      M := Character'Pos (Cert_Slice (Index)) / 40;
-      N := Character'Pos (Cert_Slice (Index)) - 40;
+      -- DH ("Looking up OID", 
+      --     To_Byte_Seq (Cert_Slice (Index .. Index + Num_Octets - 1)));
 
-      --  MSB in each octet set to 1.
+      Object_ID := OID.Lookup (Cert_Slice (Index .. Index + Num_Octets - 1));
+
+      if Object_ID = OID.Unknown then
+         Cert.Valid := False;
+         return;
+      end if;
+
+      Index := Index + Num_Octets;
    end Parse_Object_Identifier;
 
    --  Fwd declare and contracts
@@ -262,12 +309,99 @@ is
                                         Index      : in out Natural;
                                         Cert       : in out Certificate)
    is
-      Seq_Size : Unsigned_32;
+      Seq_Size  : Unsigned_32;
+      Object_ID : OID.Object_ID;
    begin
       --  Expect a sequence containing an object identifier
       Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
-      Parse_Object_Identifier (Cert_Slice, Index, Cert);
+      Parse_Object_Identifier (Cert_Slice, Index, Object_ID, Cert);
+
+      Put_Line ("Signature Algorithm: " & Object_ID'Image);
    end Parse_Signature_Algorithm;
+
+   --  Fwd declare and contracts
+   procedure Parse_Identification (Cert_Slice : String;
+                                   Index      : in out Natural;
+                                   ID         : in out Identification_Type;
+                                   Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+
+   procedure Parse_Identification (Cert_Slice : String;
+                                   Index      : in out Natural;
+                                   ID         : in out Identification_Type;
+                                   Cert       : in out Certificate)
+   is
+      Size          : Unsigned_32;
+      Seq_End       : Natural;
+      ID_Component  : OID.Object_ID;
+   begin
+      --  Expect a sequence of sets of sequences
+      Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
+      
+      if Cert.Valid and Size /= 0 then
+         Seq_End := Index + Natural (Size);
+      else
+         Cert.Valid := False;
+         return;
+      end if;
+      
+      while Index < Seq_End loop
+         Parse_Set (Cert_Slice, Index, Size, Cert);
+         Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
+
+         --  Expect Object Identifier and then a string of some sort. The type
+         --  of string we'll parse depends on the object ID. This is because
+         --  different string types have different sizes here.
+         Parse_Object_Identifier (Cert_Slice, Index, ID_Component, Cert);
+
+         case ID_Component is
+            when OID.COUNTRY => null;
+            when OID.STATE_OR_PROVINCE => null;
+            when OID.LOCALITY => null;
+            when OID.ORG => null;
+            when OID.ORG_UNIT => null;
+            when OID.COMMON_NAME => null;
+            when OID.GIVEN_NAME => null;
+            when OID.SURNAME => null;
+            when OID.INITIALS => null;
+            when OID.GENERATION_QUALIFIER => null;
+            when OID.PSEUDONYM => null;
+            when others => null;
+         end case;
+      end loop;
+   end Parse_Identification;
+
+   --  Fwd declare and contracts
+   procedure Parse_Issuer (Cert_Slice : String;
+                           Index      : in out Natural;
+                           Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+
+   procedure Parse_Issuer (Cert_Slice : String;
+                           Index      : in out Natural;
+                           Cert       : in out Certificate)
+   is
+      Size      : Unsigned_32;
+      Seq_End   : Natural;
+      Object_ID : OID.Object_ID;
+
+   begin
+      Parse_Identification (Cert_Slice, Index, Cert.Issuer, Cert);
+   end Parse_Issuer;
+
+   --  Fwd declare and contracts
+   procedure Parse_Subject (Cert_Slice : String;
+                            Index      : in out Natural;
+                            Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+
+   procedure Parse_Subject (Cert_Slice : String;
+                            Index      : in out Natural;
+                            Cert       : in out Certificate)
+   is
+   begin
+      Parse_Identification (Cert_Slice, Index, Cert.Subject, Cert);
+   end Parse_Subject;
 
    --  Fwd declare and contracts
    procedure Parse_Cert_Info (Cert_Slice : String;
@@ -288,6 +422,7 @@ is
       Parse_Version (Cert_Slice, Index, Cert);
       Parse_Serial (Cert_Slice, Index, Cert);
       Parse_Signature_Algorithm (Cert_Slice, Index, Cert);
+      Parse_Issuer (Cert_Slice, Index, Cert);
 
       Put_Line ("Certificate Version: " & Cert.Version'Image);
       Put ("Certificate Serial:  ");

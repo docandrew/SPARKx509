@@ -1,5 +1,5 @@
 package OID 
-   with SPARK_Mode, Pure
+   with SPARK_Mode
 is
    type Object_ID is (
       --  Catch-all for object IDs we don't support or recognize
@@ -65,7 +65,7 @@ is
       --  Other object identifiers that RFC 5280 implementations SHOULD handle
       GIVEN_NAME,                      --  2.5.4.42
       INITIALS,                        --  2.5.4.43
-      GENERATION_QUALIFIER,            --  2.5.4.49
+      GENERATION_QUALIFIER,            --  2.5.4.44
       DISTINGUISHED_NAME,              --  2.5.4.49
       SUPPORTED_ALGORITHMS,            --  2.5.4.52
       PSEUDONYM,                       --  2.5.4.65
@@ -75,7 +75,7 @@ is
       --  2 Joint ISO -> 5 Directory Services -> 29 Certificate Extensions
       --  authority key identifier         2.5.29.1 deprecated
       --  key attributes                   2.5.29.2 obsolete
-      CERTIFICATE_POLICIES,            --  2.5.29.3 (obsolete but common)
+      CERTIFICATE_POLICIES_VERISIGN,   --  2.5.29.3 (obsolete but common)
       --  key usage restriction            2.5.29.4 obsolete
       --  policy mapping                   2.5.29.5 obsolete
       --  subtrees constraint              2.5.29.6 obsolete
@@ -144,15 +144,11 @@ is
       HOLDER_NAME_CONSTRAINTS          --  2.5.29.69
    );
 
-   procedure Lookup (Packed : String) return Object_ID is
-      Octet : Natural := Character'Pos (Packed (Packed'First));
-   begin
-      --  First 2 numbers of ID are packed w/ 40m + n, and m is always 0,1,2
-      --  0.9 = 09
-      --  1.2 = 2A
-      --  1.3 = 2B
-      --  2.5 = 55
-      case Octet is
-   end Lookup;
+   ----------------------------------------------------------------------------
+   --  Given the object identifier as a string of bytes, return the Object_ID
+   --  constant corresponding to that identifier.
+   --  @param Packed is the object identifier string slice _excluding_ the
+   --  DER tag byte (06) and length byte.
+   function Lookup (Packed : String) return Object_ID;
    
 end OID;
