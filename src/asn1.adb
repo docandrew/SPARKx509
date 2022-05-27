@@ -1,4 +1,4 @@
-
+with Ada.Calendar.Formatting; use Ada.Calendar.Formatting;
 with Ada.Text_IO; use Ada.Text_IO;
 
 with OID;
@@ -17,9 +17,25 @@ is
    TYPE_NUMSTRING   : constant := 16#12#;
    TYPE_PRINTSTRING : constant := 16#13#;
    TYPE_UTCTIME     : constant := 16#17#;
+   TYPE_GENTIME     : constant := 16#18#;
    TYPE_SEQUENCE    : constant := 16#30#;
    TYPE_SET         : constant := 16#31#;
    TYPE_VERSION     : constant := 16#A0#;
+
+   ----------------------------------------------------------------------------
+   --  Check_Bounds
+   --  Convenience function for avoiding out-of-bounds indexing.
+   --
+   --  Given the certificate string, current index and the length of the
+   --  object to be parsed, will the index remain in bounds during the
+   --  object parsing?
+   ----------------------------------------------------------------------------
+   function Check_Bounds (Cert_Slice : String;
+                          Index      : Natural;
+                          Obj_Len    : Unsigned_32) return Boolean is
+   begin
+      return Unsigned_32 (Index) + Obj_Len - 1 <= Unsigned_32 (Cert_Slice'Last);
+   end Check_Bounds;
 
    --  Fwd declare and contracts
    procedure Parse_Size (Cert_Slice : String;
@@ -46,7 +62,8 @@ is
       else
          --  Otherwise, it's a long variant. The lower 7 bits will contain
          --  the number of octets holding the size. Anything more than 4 and
-         --  we balk.
+         --  we balk, since this would be an insanely long certificate and
+         --  is almost certainly malicious.
          Num_Octets := (Character'Pos (Cert_Slice (Index)) and 16#7F#);
 
          if Num_Octets > 4 then
@@ -73,6 +90,101 @@ is
          end if;
       end if;
    end Parse_Size;
+
+   ---------------------------------------------------------------------------
+   -- Return True if the type tag represented by the input is one of any of
+   -- the possible string types.
+   ---------------------------------------------------------------------------
+   function Is_String (Tag : Character) return Boolean is
+      Tag_C : Natural := Character'Pos (Tag);
+   begin
+      return Tag_C = TYPE_UTF8STRING or
+             Tag_C = TYPE_PRINTSTRING or
+             Tag_C = TYPE_NUMSTRING;
+   end Is_String;
+
+   ---------------------------------------------------------------------------
+   -- Parse_String
+   ---------------------------------------------------------------------------
+   generic
+      with Package P is new Generic_Bounded_Length (<>);
+   procedure Generic_Parse_String (Cert_Slice : String;
+                                   Index      : in out Natural;
+                                   S          : in out P.Bounded_String;
+                                   Cert       : in out Certificate);
+
+   procedure Generic_Parse_String (Cert_Slice : String;
+                                   Index      : in out Natural;
+                                   S          : in out P.Bounded_String;
+                                   Cert       : in out Certificate)
+   is
+      Actual_Length : Unsigned_32;
+   begin
+      if not Cert.Valid then
+         S := P.To_Bounded_String ("");
+         return;
+      end if;
+
+      if not Is_String (Cert_Slice (Index)) then
+         Put_Line ("FATAL: Expected a string type");
+         Cert.Valid := False;
+         S := P.To_Bounded_String ("");
+         return;
+      end if;
+
+      --  Skip tag
+      Index := Index + 1;
+
+      --  Ensure length of string does not exceed the RFC string upper-bound
+      Parse_Size (Cert_Slice, Index, Actual_Length, Cert);
+
+      -- Put_Line ("String size: " & Actual_Length'Image);
+      if not Cert.Valid or Actual_Length > Unsigned_32 (P.Max_Length) then
+         S := P.To_Bounded_String ("");
+         return;
+      end if;
+
+      if not Check_Bounds (Cert_Slice, Index, Actual_Length) then
+         Cert.Valid := False;
+         S := P.To_Bounded_String ("");
+         return;
+      end if;
+
+      --  We ensure the string will fit within the RFC 5280 prescribed bounds,
+      --  but additionally specify a "Drop" param here as it's non-throwing.
+      S := P.To_Bounded_String (Source => 
+                                 Cert_Slice (Index .. Index + 
+                                    Natural (Actual_Length) - 1),
+                                Drop   => Ada.Strings.Right);
+
+      Index := Index + Natural (Actual_Length);
+   end Generic_Parse_String;
+
+   --  Generic instantiations for the various bounded string types
+   procedure Parse_Country
+      is new Generic_Parse_String (UB_Country_Name);
+   procedure Parse_State
+      is new Generic_Parse_String (UB_State);
+   procedure Parse_Locality
+      is new Generic_Parse_String (UB_Locality);
+   procedure Parse_Common_Name
+      is new Generic_Parse_String (UB_Common_Name);
+   procedure Parse_Org
+      is new Generic_Parse_String (UB_Org);
+   procedure Parse_Org_Unit
+      is new Generic_Parse_String (UB_Org_Unit);
+   procedure Parse_Title
+      is new Generic_Parse_String (UB_Title);
+   procedure Parse_Given_Name
+      is new Generic_Parse_String (UB_Given_Name);
+   procedure Parse_Surname
+      is new Generic_Parse_String (UB_Surname);
+   procedure Parse_Initials
+      is new Generic_Parse_String (UB_Initials);
+   procedure Parse_Pseudonym
+      is new Generic_Parse_String (UB_Pseudonym);
+   procedure Parse_Generation
+      is new Generic_Parse_String (UB_Generation);
 
    --  Fwd declare and contracts
    procedure Parse_Sequence_Data (Cert_Slice : String;
@@ -105,7 +217,16 @@ is
       Index := Index + 1;
 
       Parse_Size (Cert_Slice, Index, Size, Cert);
-      Put_Line (" Sequence Size: " & Size'Image);
+      -- Put_Line (" Sequence Size: " & Size'Image);
+
+      if not Check_Bounds (Cert_Slice, Index, Size) then
+         Put_Line ("FATAL: Sequence length greater than certificate size");
+         -- Put_Line ("  Cert_Slice'Last:" & Cert_Slice'Last'Image);
+         -- Put_Line ("  Size: " & Size'Image);
+         Cert.Valid := False;
+         return;
+      end if;
+
    end Parse_Sequence_Data;
 
    --  Fwd declare and contracts
@@ -140,7 +261,15 @@ is
       Index := Index + 1;
 
       Parse_Size (Cert_Slice, Index, Size, Cert);
-      Put_Line (" Set Size: " & Size'Image);
+
+      if not Check_Bounds (Cert_Slice, Index, Size) then
+         Put_Line ("FATAL: Set length greater than certificate size");
+         Cert.Valid := False;
+         Size := 0;
+         return;
+      end if;
+
+      -- Put_Line (" Set Size: " & Size'Image);
    end Parse_Set;
 
    --  Fwd declare and contracts
@@ -277,7 +406,8 @@ is
       --  Object ID shouldn't be more than a handful of bytes in an X.509 cert. 
       --  If the MSb is set, indicating a length > 127, or if it's longer than
       --  our cert itself, then we balk.
-      if Num_Octets > 127 or Num_Octets + Index > Cert_Slice'Last then
+      if Num_Octets > 127 or 
+         not Check_Bounds (Cert_Slice, Index, Unsigned_32 (Num_Octets)) then
          Put_Line ("FATAL: Object ID too large");
          Object_ID := OID.UNKNOWN;
          Cert.Valid := False;
@@ -351,22 +481,62 @@ is
 
          --  Expect Object Identifier and then a string of some sort. The type
          --  of string we'll parse depends on the object ID. This is because
-         --  different string types have different sizes here.
+         --  different string types have different sizes/character sets here.
          Parse_Object_Identifier (Cert_Slice, Index, ID_Component, Cert);
 
+         if not Cert.Valid then
+            return;
+         end if;
+
          case ID_Component is
-            when OID.COUNTRY => null;
-            when OID.STATE_OR_PROVINCE => null;
-            when OID.LOCALITY => null;
-            when OID.ORG => null;
-            when OID.ORG_UNIT => null;
-            when OID.COMMON_NAME => null;
-            when OID.GIVEN_NAME => null;
-            when OID.SURNAME => null;
-            when OID.INITIALS => null;
-            when OID.GENERATION_QUALIFIER => null;
-            when OID.PSEUDONYM => null;
-            when others => null;
+            when OID.COUNTRY =>
+               Put ("Country: ");
+               Parse_Country (Cert_Slice, Index, ID.Country, Cert);
+               Put_Line (UB_Country_Name.To_String (ID.Country));
+            when OID.STATE_OR_PROVINCE =>
+               Put ("State: ");
+               Parse_State (Cert_Slice, Index, ID.State, Cert);
+               Put_Line (UB_State.To_String (ID.State));
+            when OID.LOCALITY =>
+               Put ("Locality: ");
+               Parse_Locality (Cert_Slice, Index, ID.Locality, Cert);
+               Put_Line (UB_Locality.To_String (ID.Locality));
+            when OID.ORG =>
+               Put ("Organization: ");
+               Parse_Org (Cert_Slice, Index, ID.Org, Cert);
+               Put_Line (UB_Org.To_String (ID.Org));
+            when OID.ORG_UNIT =>
+               Put ("Organizational Unit: ");
+               Parse_Org_Unit (Cert_Slice, Index, ID.Org_Unit, Cert);
+               Put_Line (UB_Org_Unit.To_String (ID.Org_Unit));
+            when OID.COMMON_NAME =>
+               Put ("Common Name: ");
+               Parse_Common_Name (Cert_Slice, Index, ID.Common_Name, Cert);
+               Put_Line (UB_Common_Name.To_String (ID.Common_Name));
+            when OID.GIVEN_NAME =>
+               Put ("Given Name: ");
+               Parse_Given_Name (Cert_Slice, Index, ID.Given_Name, Cert);
+               Put_Line (UB_Given_Name.To_String (ID.Given_Name));
+            when OID.SURNAME =>
+               Put ("Surname: ");
+               Parse_Surname (Cert_Slice, Index, ID.Surname, Cert);
+               Put_Line (UB_Surname.To_String (ID.Surname));
+            when OID.INITIALS =>
+               Put ("Initials: ");
+               Parse_Initials (Cert_Slice, Index, ID.Initials, Cert);
+               Put_Line (UB_Initials.To_String (ID.Initials));
+            when OID.GENERATION_QUALIFIER =>
+               Put ("Generation: ");
+               Parse_Generation (Cert_Slice, Index, ID.Generation, Cert);
+               Put_Line (UB_Generation.To_String (ID.Generation));
+            when OID.PSEUDONYM =>
+               Put ("Pseudonym: ");
+               Parse_Pseudonym (Cert_Slice, Index, ID.Pseudonym, Cert);
+               Put_Line (UB_Pseudonym.To_String (ID.Pseudonym));
+            when others =>
+               Put_Line ("FATAL: Inappropriate Identification Field");
+               Cert.Valid := False;
+               return;
          end case;
       end loop;
    end Parse_Identification;
@@ -381,10 +551,6 @@ is
                            Index      : in out Natural;
                            Cert       : in out Certificate)
    is
-      Size      : Unsigned_32;
-      Seq_End   : Natural;
-      Object_ID : OID.Object_ID;
-
    begin
       Parse_Identification (Cert_Slice, Index, Cert.Issuer, Cert);
    end Parse_Issuer;
@@ -402,6 +568,152 @@ is
    begin
       Parse_Identification (Cert_Slice, Index, Cert.Subject, Cert);
    end Parse_Subject;
+
+   --  Fwd declare and contracts
+   procedure Parse_Time (Cert_Slice : String;
+                         Index      : in out Natural;
+                         Period     : in out Time;
+                         Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+   
+   procedure Parse_Time (Cert_Slice : String;
+                         Index      : in out Natural;
+                         Period     : in out Time;
+                         Cert       : in out Certificate)
+   is
+      --  function Is_Num (C : Character) return Boolean is
+      --  begin
+      --     return C in '0' .. '9';
+      --  end Is_Num;
+
+      Year, Month, Day, Hour, Minute, Second : Natural;
+   begin
+
+      if not Cert.Valid then
+         return;
+      end if;
+
+      --  Difference is YY vs YYYY. 
+      case Character'Pos (Cert_Slice (Index)) is
+         when TYPE_UTCTIME =>
+            --  Skip tag
+            Index := Index + 1;
+
+            --  Expect 13 bytes YYMMDDhhmmssZ
+            if Character'Pos (Cert_Slice (Index)) /= 13 then
+               Put_Line ("FATAL: UTCTime must be 13 bytes");
+               Cert.Valid := False;
+               return;
+            end if;
+
+            --  Skip length
+            Index := Index + 1;
+
+            if not Check_Bounds (Cert_Slice, Index, 13) then
+               Put_Line ("FATAL: Time stamp too large");
+               Cert.Valid := False;
+               return;
+            end if;
+            
+            Year   := Natural'Value (Cert_Slice (Index .. Index + 1));
+            Index  := Index + 2;
+
+            --  Dates after 31 Dec 2049 should use GeneralizedTime per RFC 5280
+            if Year > 49 then
+               Year := 1900 + Year;
+            else
+               Year := 2000 + Year;
+            end if;
+
+         when TYPE_GENTIME =>
+            --  Skip tag
+            Index := Index + 1;
+
+            --  Expect 15 bytes YYYYMMDDhhmmssZ
+            if Character'Pos (Cert_Slice (Index)) /= 15 then
+               Put_Line ("FATAL: Generalized_Time must be 15 bytes");
+               Cert.Valid := False;
+               return;
+            end if;
+
+            --  Skip length
+            Index := Index + 1;
+
+            if not Check_Bounds (Cert_Slice, Index, 13) then
+               Put_Line ("FATAL: Time stamp too large");
+               Cert.Valid := False;
+               return;
+            end if;
+
+            Year   := Natural'Value (Cert_Slice (Index .. Index + 3));
+            Index  := Index + 4;
+         when others =>
+            Put_Line ("FATAL: Expected valid time type");
+            Cert.Valid := False;
+            return;
+      end case;
+
+      Month  := Natural'Value (Cert_Slice (Index .. Index + 1));
+      Index  := Index + 2;
+      Day    := Natural'Value (Cert_Slice (Index .. Index + 1));
+      Index  := Index + 2;
+      Hour   := Natural'Value (Cert_Slice (Index .. Index + 1));
+      Index  := Index + 2;
+      Minute := Natural'Value (Cert_Slice (Index .. Index + 1));
+      Index  := Index + 2;
+      Second := Natural'Value (Cert_Slice (Index .. Index + 1));
+      Index  := Index + 2;
+
+      if Cert_Slice (Index) /= 'Z' then
+         Put_Line ("FATAL: Certificate validity must be a GMT time");
+         Cert.Valid := False;
+         return;
+      end if;
+
+      Index := Index + 1;
+
+      --  Make sure limits make sense
+      if Month  not in 1 .. 12 or
+         Day    not in 1 .. 31 or
+         Hour   not in 0 .. 23 or
+         Minute not in 0 .. 59 or
+         Second not in 0 .. 59 then
+            Put_Line ("FATAL: Bad time stamp in certificate");
+            Cert.Valid := False;
+            return;
+      end if;
+
+      Period := Time_Of (Year, Month, Day, Hour, Minute, Second);
+
+   exception
+      when E : Constraint_Error =>
+         Put_Line ("FATAL: Invalid character in time stamp");
+         Cert.Valid := False;
+         return;
+   end Parse_Time;
+
+   --  Fwd declare and contracts
+   procedure Parse_Validity_Period (Cert_Slice : String;
+                                    Index      : in out Natural;
+                                    Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+   
+   procedure Parse_Validity_Period (Cert_Slice : String;
+                                    Index      : in out Natural;
+                                    Cert       : in out Certificate)
+   is
+      Seq_Size : Unsigned_32;
+   begin
+      if not Cert.Valid then
+         return;
+      end if;
+
+      --  Expect a sequence of 2 UTCTime objects or 2 GeneralizedTime
+      --  objects.
+      Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
+      Parse_Time (Cert_Slice, Index, Cert.Valid_From, Cert);
+      Parse_Time (Cert_Slice, Index, Cert.Valid_To, Cert);
+   end Parse_Validity_Period;
 
    --  Fwd declare and contracts
    procedure Parse_Cert_Info (Cert_Slice : String;
@@ -423,9 +735,15 @@ is
       Parse_Serial (Cert_Slice, Index, Cert);
       Parse_Signature_Algorithm (Cert_Slice, Index, Cert);
       Parse_Issuer (Cert_Slice, Index, Cert);
+      Parse_Validity_Period (Cert_Slice, Index, Cert);
+      Parse_Subject (Cert_Slice, Index, Cert);
+
+      Put_Line ("Valid From: " & Image (Cert.Valid_From));
+      Put_Line ("Valid To:   " & Image (Cert.Valid_To));
 
       Put_Line ("Certificate Version: " & Cert.Version'Image);
       Put ("Certificate Serial:  ");
+
       for I in Cert.Serial'Range loop
          PB (Cert.Serial (I));
 

@@ -6,23 +6,24 @@ package ASN1 with
    SPARK_Mode
 is
    --  X.509 strings are defined with upper-bounds, per RFC 5280
-   package UB_Name                is new Generic_Bounded_Length (Max => 32768);
-   package UB_Common_Name         is new Generic_Bounded_Length (Max => 64);
-   package UB_Locality            is new Generic_Bounded_Length (Max => 128);
-   package UB_State               is new Generic_Bounded_Length (Max => 128);
-   package UB_Organization        is new Generic_Bounded_Length (Max => 64);
-   package UB_Organizational_Unit is new Generic_Bounded_Length (Max => 64);
-   package UB_Title               is new Generic_Bounded_Length (Max => 64);
-   package UB_Given_Name          is new Generic_Bounded_Length (Max => 16);
-   package UB_Surname             is new Generic_Bounded_Length (Max => 40);
-   package UB_Pseudonym           is new Generic_Bounded_Length (Max => 128);
-   package UB_Generation          is new Generic_Bounded_Length (Max => 3);
-   package UB_Serial_Number       is new Generic_Bounded_Length (Max => 64);
-   package UB_Match               is new Generic_Bounded_Length (Max => 128);
-   package UB_Email               is new Generic_Bounded_Length (Max => 255);
-   package UB_Country_Name        is new Generic_Bounded_Length (Max => 2);
-   package UB_Country_Numeric     is new Generic_Bounded_Length (Max => 3);
-   package UB_Postal_Code         is new Generic_Bounded_Length (Max => 16);
+   --  package UB_Name        is new Generic_Bounded_Length (Max => 32768);
+   package UB_Common_Name     is new Generic_Bounded_Length (Max => 64);
+   package UB_Locality        is new Generic_Bounded_Length (Max => 128);
+   package UB_State           is new Generic_Bounded_Length (Max => 128);
+   package UB_Org             is new Generic_Bounded_Length (Max => 64);
+   package UB_Org_Unit        is new Generic_Bounded_Length (Max => 64);
+   package UB_Title           is new Generic_Bounded_Length (Max => 64);
+   package UB_Given_Name      is new Generic_Bounded_Length (Max => 16);
+   package UB_Surname         is new Generic_Bounded_Length (Max => 40);
+   package UB_Initials        is new Generic_Bounded_Length (Max => 5);
+   package UB_Pseudonym       is new Generic_Bounded_Length (Max => 128);
+   package UB_Generation      is new Generic_Bounded_Length (Max => 3);
+   package UB_Serial_Number   is new Generic_Bounded_Length (Max => 64);
+   package UB_Match           is new Generic_Bounded_Length (Max => 128);
+   package UB_Email           is new Generic_Bounded_Length (Max => 255);
+   package UB_Country_Name    is new Generic_Bounded_Length (Max => 2);
+   package UB_Country_Numeric is new Generic_Bounded_Length (Max => 3);
+   package UB_Postal_Code     is new Generic_Bounded_Length (Max => 16);
 
    type Signature_Algorithm_Type is (ED25519);
 
@@ -35,11 +36,12 @@ is
       State               : UB_State.Bounded_String;
       Locality            : UB_Locality.Bounded_String;
       Common_Name         : UB_Common_Name.Bounded_String;
-      Organization        : UB_Organization.Bounded_String;
-      Organizational_Unit : UB_Organizational_Unit.Bounded_String;
-      Title               : UB_Given_Name.Bounded_String;
+      Org                 : UB_Org.Bounded_String;
+      Org_Unit            : UB_Org_Unit.Bounded_String;
+      Title               : UB_Title.Bounded_String;
       Given_Name          : UB_Given_Name.Bounded_String;
       Surname             : UB_Surname.Bounded_String;
+      Initials            : UB_Initials.Bounded_String;
       Pseudonym           : UB_Pseudonym.Bounded_String;
       Generation          : UB_Generation.Bounded_String;
    end record;
@@ -56,6 +58,9 @@ is
       Valid_To            : Time;
    end record;
 
+   ---------------------------------------------------------------------------
+   -- Parse_Certificate
+   ---------------------------------------------------------------------------
    procedure Parse_Certificate (Cert_Bytes : String; Cert : out Certificate);
 
 end ASN1;
