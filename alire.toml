@@ -1,7 +1,7 @@
-name = "SPARKx509"
+name = "sparkx509"
 description = "Verified library for X.509 certificates"
 version = "0.0.1"
 
 authors = ["Jon Andrew"]
-maintainers = ["Jon Andrew <doc@swapgs.com>"]
+maintainers = ["Jon Andrew <doc@fastmail.com>"]
 maintainers-logins = ["docandrew"]

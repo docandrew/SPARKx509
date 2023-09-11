@@ -2,6 +2,8 @@ with Ada.Calendar; use Ada.Calendar;
 with Ada.Strings.Bounded; use Ada.Strings.Bounded;
 with Interfaces; use Interfaces;
 
+with OID; use OID;
+
 package ASN1 with
    SPARK_Mode
 is
@@ -25,7 +27,7 @@ is
    package UB_Country_Numeric is new Generic_Bounded_Length (Max => 3);
    package UB_Postal_Code     is new Generic_Bounded_Length (Max => 16);
 
-   type Signature_Algorithm_Type is (ED25519);
+   subtype Algorithm_Identifier is OID.Object_ID range RSA_ENCRYPTION .. ID_EDDSA448_PH;
 
    --  Maximum length of serial number is 20 per RFC 5280
    type Serial_Number_Type is array (Natural range <>) of Unsigned_8;
@@ -46,16 +48,31 @@ is
       Generation          : UB_Generation.Bounded_String;
    end record;
 
-   -- @field Valid False if an error was found during parsing, True otherwise.
+   type Key_Bytes is array (Natural range 0 .. 65535) of Unsigned_8;
+
+   -- @field Valid is False if an error was found during parsing, True otherwise.
+   -- @field Version is the version of this x.509 certificate
+   -- @field Serial is the serial number of this x.509 certificate
+   -- @field Signature_Algorithm, see Signature_Algorithm_Type
+   -- @field Issuer is issuer details, see Identification_Type
+   -- @field Subject is subject details, see Identification_Type
+   -- @field Valid_From is the start of the certificate validity period
+   -- @field Valid_To is the end of the certificate validity period
+   -- @field Public_Key_Algorithm is the algorithm for the public key
+   -- @field Public_Key_Len is the length of the public key, in bytes
+   -- @field Public_Key are the actual bytes of the public key
    type Certificate is record
-      Valid               : Boolean;
-      Version             : Integer;
-      Serial              : Serial_Number_Type (1 .. 20) := (others => 0);
-      Signature_Algorithm : Signature_Algorithm_Type;
-      Issuer              : Identification_Type;
-      Subject             : Identification_Type;
-      Valid_From          : Time;
-      Valid_To            : Time;
+      Valid                : Boolean;
+      Version              : Integer;
+      Serial               : Serial_Number_Type (1 .. 20) := (others => 0);
+      Signature_Algorithm  : Algorithm_Identifier;
+      Issuer               : Identification_Type;
+      Subject              : Identification_Type;
+      Valid_From           : Time;
+      Valid_To             : Time;
+      Public_Key_Algorithm : Algorithm_Identifier;
+      Public_Key_Len       : Natural := 0;
+      Public_Key           : Key_Bytes;
    end record;
 
    ---------------------------------------------------------------------------

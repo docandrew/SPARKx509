@@ -1,6 +1,6 @@
 with Ada.Text_IO; use Ada.Text_IO;
 
-package body x509Ada.Debug is
+package body SPARKx509.Debug is
    type BToCT is array (Byte range 0 .. 15) of Character;
 
    BToC : constant BToCT := (
@@ -62,4 +62,4 @@ package body x509Ada.Debug is
       return Ret;
    end To_Byte_Seq;
 
-end x509Ada.Debug;
+end SPARKx509.Debug;

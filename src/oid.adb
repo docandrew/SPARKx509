@@ -1,4 +1,4 @@
-with X509Ada; use X509Ada;
+with SPARKx509; use SPARKx509;
 
 package body OID
    with SPARK_Mode

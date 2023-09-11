@@ -1,7 +1,7 @@
 with Interfaces; use Interfaces;
-with x509Ada; use x509Ada;
+with SPARKx509; use SPARKx509;
 
-package x509Ada.Debug is
+package SPARKx509.Debug is
 
    procedure PB (X : in Unsigned_8);
 
@@ -9,4 +9,4 @@ package x509Ada.Debug is
 
    function To_Byte_Seq (S : String) return Byte_Seq;
 
-end x509Ada.Debug;
+end SPARKx509.Debug;

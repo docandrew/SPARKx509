@@ -1,8 +1,8 @@
-with "config/x509ada_config.gpr";
-project X509ada is
+with "config/sparkx509_config.gpr";
+project sparkx509 is
 
-   for Library_Name use "X509ada";
-   for Library_Version use Project'Library_Name & ".so." & X509ada_Config.Crate_Version;
+   for Library_Name use "sparkx509";
+   for Library_Version use Project'Library_Name & ".so." & sparkx509_Config.Crate_Version;
 
    for Source_Dirs use ("src");
    for Object_Dir use "obj";
@@ -85,4 +85,4 @@ project X509ada is
       for Switches ("Ada") use ("-Es"); --  Symbolic traceback
    end Binder;
 
-end X509ada;
+end sparkx509;

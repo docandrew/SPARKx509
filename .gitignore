@@ -1,0 +1,16 @@
+obj/
+lib/
+alire/
+config/
+scratch/
+
+# Ignore generated .ads and .adb
+*b__*
+
+# Ignore objects, .ali, stderr and stdout
+*.o
+*.a
+*.ali
+*.bexch
+*.stderr
+*.stdout

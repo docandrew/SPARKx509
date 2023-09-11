@@ -2,7 +2,7 @@ with Ada.Calendar.Formatting; use Ada.Calendar.Formatting;
 with Ada.Text_IO; use Ada.Text_IO;
 
 with OID;
-with X509Ada.Debug; use X509Ada.Debug;
+with SPARKx509.Debug; use SPARKx509.Debug;
 
 package body ASN1 with
    SPARK_Mode
@@ -11,6 +11,7 @@ is
    TYPE_INTEGER     : constant := 16#02#;
    TYPE_BITSTRING   : constant := 16#03#;
    TYPE_OCTETSTRING : constant := 16#04#;
+   TYPE_NULL        : constant := 16#05#;
    TYPE_OBJECTID    : constant := 16#06#;
    TYPE_REAL        : constant := 16#09#;
    TYPE_UTF8STRING  : constant := 16#0C#;
@@ -185,6 +186,39 @@ is
       is new Generic_Parse_String (UB_Pseudonym);
    procedure Parse_Generation
       is new Generic_Parse_String (UB_Generation);
+
+   --  Fwd declare and contracts
+   procedure Parse_Null (Cert_Slice : String;
+                         Index      : in out Natural;
+                         Cert       : in out Certificate);
+
+   procedure Parse_Null (Cert_Slice : String;
+                         Index      : in out Natural;
+                         Cert       : in out Certificate)
+   is
+   begin
+      if not Cert.Valid then
+         return;
+      end if;
+
+      if Character'Pos (Cert_Slice (Index)) /= TYPE_NULL then
+         Put_Line ("FATAL: Expected a Null at " & Index'Image);
+         Cert.Valid := False;
+         return;
+      end if;
+
+      Index := Index + 1;
+
+      --  Expect the byte following the null to be 0x00, indicating the end of this field.
+      --  If it's not, then we've got a malformed certificate.
+      if Cert_Slice (Index) /= ASCII.NUl then
+         Put_Line ("FATAL: Expected a Null terminator at " & Index'Image);
+         Cert.Valid := False;
+         return;
+      end if;
+
+      Index := Index + 1;
+   end Parse_Null;
 
    --  Fwd declare and contracts
    procedure Parse_Sequence_Data (Cert_Slice : String;
@@ -429,6 +463,28 @@ is
       Index := Index + Num_Octets;
    end Parse_Object_Identifier;
 
+   -- Fwd declare and contracts
+   procedure Parse_Signature_Algorithm_Parameters (Cert_Slice : String;
+                                                   Index      : in out Natural;
+                                                   Scheme     : in Algorithm_Identifier;
+                                                   Cert       : in out Certificate);
+
+   procedure Parse_Signature_Algorithm_Parameters (Cert_Slice : String;
+                                                   Index      : in out Natural;
+                                                   Scheme     : in Algorithm_Identifier;
+                                                   Cert       : in out Certificate)
+   is
+   begin
+      case Scheme is
+         when SHA256_WITH_RSA .. SHA224_WITH_RSA =>
+            Parse_Null (Cert_Slice, Index, Cert);
+         when others =>
+            Put_Line ("FATAL: Unknown Signature Algorithm");
+            Cert.Valid := False;
+            return;
+      end case;
+   end Parse_Signature_Algorithm_Parameters;
+
    --  Fwd declare and contracts
    procedure Parse_Signature_Algorithm (Cert_Slice : String;
                                         Index      : in out Natural;
@@ -439,12 +495,30 @@ is
                                         Index      : in out Natural;
                                         Cert       : in out Certificate)
    is
-      Seq_Size  : Unsigned_32;
-      Object_ID : OID.Object_ID;
+      Seq_Size   : Unsigned_32;
+      Object_ID  : OID.Object_ID;
+      Algorithm  : Algorithm_Identifier;
    begin
-      --  Expect a sequence containing an object identifier
+      --  Expect a sequence containing an object identifier and then an optional parameter
       Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
       Parse_Object_Identifier (Cert_Slice, Index, Object_ID, Cert);
+
+      if Object_ID not in RSA_ENCRYPTION .. ID_EDDSA448_PH then
+         Put_Line ("FATAL: Unknown Signature Algorithm");
+         Cert.Valid := False;
+         return;
+      else
+         Algorithm := Algorithm_Identifier (Object_ID);
+      end if;
+
+      -- Depends on signature algorithm
+      if Seq_Size = 1 then
+         null;
+      elsif Seq_Size = 2 then
+         Parse_Signature_Algorithm_Parameters (Cert_Slice, Index, Algorithm, Cert);
+      else
+         Put_Line ("FATAL: Signature Algorithm sequence too long");
+      end if;
 
       Put_Line ("Signature Algorithm: " & Object_ID'Image);
    end Parse_Signature_Algorithm;
@@ -716,6 +790,87 @@ is
    end Parse_Validity_Period;
 
    --  Fwd declare and contracts
+   procedure Parse_Bit_String (Cert_Slice : String;
+                               Index      : in out Natural;
+                               Size       : in out Unsigned_32;
+                               Cert       : in out Certificate;
+                               Bytes      : in out Key_Bytes)
+      with Pre => Index in Cert_Slice'Range;
+
+   procedure Parse_Bit_String (Cert_Slice : String;
+                               Index      : in out Natural;
+                               Size       : in out Unsigned_32;
+                               Cert       : in out Certificate;
+                               Bytes      : in out Key_Bytes)
+   is
+      --  Size        : Unsigned_32;
+      Unused_Bits : Unsigned_8;
+   begin
+      if not Cert.Valid then
+         return;
+      end if;
+
+      -- Expect length, then a single byte containing the number of unused
+      -- bits at the _end_ of the bit string.
+      Parse_Size (Cert_Slice, Index, Size, Cert);
+      Put_Line ("Bit String Size:" & Size'Image);
+
+      Unused_Bits := Character'Pos (Cert_Slice (Index));
+      Index := Index + 1;
+
+      --  Indicates malicious or corrupted certificate.
+      if Unused_Bits > 7 then
+         Put_Line ("FATAL: Excessive unused bits in bit string.");
+         Cert.Valid := False;
+         return;
+      end if;
+   end Parse_Bit_String;
+
+   --  Fwd declare and contracts
+   procedure Parse_Public_Key_Algorithm (Cert_Slice : String;
+                                         Index      : in out Natural;
+                                         Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+   
+   procedure Parse_Public_Key_Algorithm (Cert_Slice : String;
+                                         Index      : in out Natural;
+                                         Cert       : in out Certificate)
+   is
+      Size : Unsigned_32;
+      ID   : OID.Object_ID;
+
+      Key_Size : Unsigned_32;
+      --  Key      : Key_Bytes;
+   begin
+      Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
+      Parse_Object_Identifier (Cert_Slice, Index, ID, Cert);
+
+      --  Cert.Public_Key_Algorithm := ID;
+      --  Parse_Bit_String (Cert_Slice, Index, Key_Size, Cert, Cert.Public_Key);
+   end Parse_Public_Key_Algorithm;
+
+   --  Fwd declare and contracts
+   procedure Parse_Public_Key_Info (Cert_Slice : String;
+                                    Index      : in out Natural;
+                                    Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+
+   procedure Parse_Public_Key_Info (Cert_Slice : String;
+                                    Index      : in out Natural;
+                                    Cert       : in out Certificate)
+   is
+      Size : Unsigned_32;
+   begin
+      -- Expect a sequence of key algo and the key itself.
+      Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
+      
+      Put_Line ("Public Key Size: " & Size'Image);
+
+      Parse_Public_Key_Algorithm (Cert_Slice, Index, Cert);
+      --  Parse_Public_Key (Cert_Slice, Index, Cert);
+   end Parse_Public_Key_Info;
+
+   --  Fwd declare and contracts
    procedure Parse_Cert_Info (Cert_Slice : String;
                               Index      : in out Natural;
                               Cert       : in out Certificate)
@@ -730,19 +885,30 @@ is
       --  Expect a constructed universal type sequence with
       --  Version, Serial Number, Signature Algorithm, Issuer, 
       --   Validity, Subject, Subject Key Info, Extensions
+      Put_Line("a");
       Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
+      Put_Line("b");
       Parse_Version (Cert_Slice, Index, Cert);
+      Put_Line("c");
       Parse_Serial (Cert_Slice, Index, Cert);
+      Put_Line("d");
       Parse_Signature_Algorithm (Cert_Slice, Index, Cert);
+      Put_Line("e");
       Parse_Issuer (Cert_Slice, Index, Cert);
+      Put_Line("f");
       Parse_Validity_Period (Cert_Slice, Index, Cert);
+      Put_Line("g");
       Parse_Subject (Cert_Slice, Index, Cert);
+      Put_Line("h");
+      Parse_Public_Key_Info (Cert_Slice, Index, Cert);
 
       Put_Line ("Valid From: " & Image (Cert.Valid_From));
       Put_Line ("Valid To:   " & Image (Cert.Valid_To));
 
       Put_Line ("Certificate Version: " & Cert.Version'Image);
       Put ("Certificate Serial:  ");
+
+      Put_Line ("Signature Algorithm: " & Cert.Public_Key_Algorithm'Image);
 
       for I in Cert.Serial'Range loop
          PB (Cert.Serial (I));
@@ -752,6 +918,8 @@ is
          end if;
       end loop;
       New_Line;
+
+      Put_Line ("Certificate Algorithm: " & Cert.Public_Key_Algorithm'Image);
    end Parse_Cert_Info;
 
    procedure Parse_Certificate (Cert_Bytes : String; Cert : out Certificate)

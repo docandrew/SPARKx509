@@ -1,4 +1,4 @@
-with "../x509ada.gpr";
+with "../sparkx509.gpr";
 
 project Tests is
 
