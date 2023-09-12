@@ -18,9 +18,18 @@ is
       ASSOCIATED_DOMAIN,               --  0.9.2342.19200300.100.1.37
       ASSOCIATED_NAME,                 --  0.9.2342.19200300.100.1.38
 
-      --  Signature Algorithms
+
+      --  Elliptic Curve Parameters
+      --  1 ISO -> 2 Member Body -> 840 US -> 10045 ANSI X9.62 -> 3 Curves -> 1 Prime
+      --  TODO: CURVES
       
-      --  1 ISO -> 2 Member Body -> 840 US -> 13549 RSADSI -> 1 PKCS -> 1 PKCS-1
+      --  Signature Algorithms
+      UNKNOWN_ALGORITHM,               --  catch-all for erroneous object IDs when decoding
+      --  1 ISO -> 2 Member Body -> 840 US -> 10045 ANSI X9.57 -> 4 Algorithms
+      --  TODO: ECDSA
+
+      --  1 ISO -> 2 Member Body -> 840 US -> 113549 RSADSI -> 1 PKCS -> 1 PKCS-1
+      --RSA_DEPRECATED,                --  1.2.840.113549.1.1.0 deprecated
       RSA_ENCRYPTION,                  --  1.2.840.113549.1.1.1
       MD2_WITH_RSA,                    --  1.2.840.113549.1.1.2
       MD4_WITH_RSA,                    --  1.2.840.113549.1.1.3

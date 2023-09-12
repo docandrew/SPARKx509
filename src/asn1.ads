@@ -27,10 +27,11 @@ is
    package UB_Country_Numeric is new Generic_Bounded_Length (Max => 3);
    package UB_Postal_Code     is new Generic_Bounded_Length (Max => 16);
 
-   subtype Algorithm_Identifier is OID.Object_ID range RSA_ENCRYPTION .. ID_EDDSA448_PH;
+   subtype Algorithm_Identifier is OID.Object_ID range UNKNOWN_ALGORITHM .. ID_EDDSA448_PH;
 
    --  Maximum length of serial number is 20 per RFC 5280
-   type Serial_Number_Type is array (Natural range <>) of Unsigned_8;
+   type Serial_Number_Length is new Natural range 1 .. 20;
+   type Serial_Number_Type is array (Serial_Number_Length) of Unsigned_8;
 
    --  Identification of a subject or issuer
    type Identification_Type is record
@@ -53,6 +54,7 @@ is
    -- @field Valid is False if an error was found during parsing, True otherwise.
    -- @field Version is the version of this x.509 certificate
    -- @field Serial is the serial number of this x.509 certificate
+   -- @field Serial_Length is the length of the serial number, in bytes
    -- @field Signature_Algorithm, see Signature_Algorithm_Type
    -- @field Issuer is issuer details, see Identification_Type
    -- @field Subject is subject details, see Identification_Type
@@ -64,7 +66,8 @@ is
    type Certificate is record
       Valid                : Boolean;
       Version              : Integer;
-      Serial               : Serial_Number_Type (1 .. 20) := (others => 0);
+      Serial_Length        : Serial_Number_Length;
+      Serial               : Serial_Number_Type := (others => 0);
       Signature_Algorithm  : Algorithm_Identifier;
       Issuer               : Identification_Type;
       Subject              : Identification_Type;
