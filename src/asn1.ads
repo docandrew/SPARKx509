@@ -51,6 +51,20 @@ is
 
    type Key_Bytes is array (Natural range 0 .. 65535) of Unsigned_8;
 
+   type Public_Key_Type (Key_Type : Algorithm_Identifier := RSA_ENCRYPTION) is record
+      case Key_Type is
+         when RSA_ENCRYPTION =>
+            Modulus_Length : Natural;
+            Modulus        : Key_Bytes;
+            Exponent       : Unsigned_32;
+         when ID_EDDSA25519 =>
+            Key_Length     : Unsigned_32;
+            Key            : Key_Bytes;
+         when others =>
+            null;
+      end case;
+   end record;
+
    -- @field Valid is False if an error was found during parsing, True otherwise.
    -- @field Version is the version of this x.509 certificate
    -- @field Serial is the serial number of this x.509 certificate
@@ -74,8 +88,7 @@ is
       Valid_From           : Time;
       Valid_To             : Time;
       Public_Key_Algorithm : Algorithm_Identifier;
-      Public_Key_Len       : Natural := 0;
-      Public_Key           : Key_Bytes;
+      Public_Key           : Public_Key_Type;
    end record;
 
    ---------------------------------------------------------------------------

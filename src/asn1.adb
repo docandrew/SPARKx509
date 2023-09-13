@@ -510,18 +510,18 @@ is
    --  Parse_Integer for large integers like a RSA key modulus
    procedure Parse_Integer (Cert_Slice : String;
                             Index      : in out Natural;
-                            Length     : out Unsigned_32;
+                            Length     : out Natural;
                             Bytes      : out Key_Bytes;
                             Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
 
    procedure Parse_Integer (Cert_Slice : String;
                             Index      : in out Natural;
-                            Length     : out Unsigned_32;
+                            Length     : out Natural;
                             Bytes      : out Key_Bytes;
                             Cert       : in out Certificate)
    is
-      Size : Unsigned_32;
+      Size : Unsigned_32 := 0;
    begin
       Length := 0;
 
@@ -549,28 +549,38 @@ is
       end if;
 
       Put_Line (" Size of integer: " & Size'Image);
-      Length := Size;
+      Length := Natural(Size);
 
-      -- TODO: finish parsing
+      if Length > Key_Bytes'Length or
+         not Check_Bounds (Cert_Slice, Index, Unsigned_32 (Length)) then
+         Put_Line ("FATAL: Integer too large");
+         Bytes := (others => 0);
+         Cert.Valid := False;
+         return;
+      end if;
+
+      for I in 0 .. Length - 1 loop
+         Bytes (I) := Unsigned_8 (Character'Pos (Cert_Slice (Index)));
+         Index := Index + 1;
+      end loop;
    end Parse_Integer;
-
 
    --  Fwd declare and contracts
    procedure Parse_Bit_String (Cert_Slice : String;
                                Index      : in out Natural;
-                               Length     : in out Unsigned_32;
+                               Length     : out Unsigned_32;
                                Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
 
    procedure Parse_Bit_String (Cert_Slice : String;
                                Index      : in out Natural;
-                               Length     : in out Unsigned_32;
+                               Length     : out Unsigned_32;
                                Cert       : in out Certificate)
    is
-      Size        : Unsigned_32;
       Unused_Bits : Unsigned_8;
    begin
       if not Cert.Valid then
+         Length := 0;
          return;
       end if;
 
@@ -584,8 +594,8 @@ is
 
       -- Expect length, then a single byte containing the number of unused
       -- bits at the _end_ of the bit string.
-      Parse_Size (Cert_Slice, Index, Size, Cert);
-      Put_Line (" Bit String Size:" & Size'Image);
+      Parse_Size (Cert_Slice, Index, Length, Cert);
+      Put_Line (" Bit String Size:" & Length'Image);
 
       Unused_Bits := Character'Pos (Cert_Slice (Index));
       Index := Index + 1;
@@ -597,9 +607,7 @@ is
          return;
       end if;
 
-      Put_Line ("Unused Bits: " & Unused_Bits'Image);
-
-      --  Now parse actual bit string.
+      Put_Line (" Unused Bits: " & Unused_Bits'Image);
    end Parse_Bit_String;
 
    --  Fwd declare and contracts
@@ -943,6 +951,45 @@ is
    end Parse_Validity_Period;
 
    --  Fwd declare and contracts
+   procedure Parse_RSA_Key (Cert_Slice : String;
+                            Index      : in out Natural;
+                            Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+   
+   procedure Parse_RSA_Key (Cert_Slice : String;
+                            Index      : in out Natural;
+                            Cert       : in out Certificate)
+   is
+      Bit_String_Size : Unsigned_32;
+      Seq_Size        : Unsigned_32;
+      Modulus_Size    : Natural;
+      Modulus         : Key_Bytes;
+      Exponent        : Unsigned_32;
+   begin
+      Parse_Bit_String (Cert_Slice, Index, Bit_String_Size, Cert);
+
+      if not Cert.Valid or Bit_String_Size = 0 then
+         Put_Line ("FATAL: Invalid RSA public key bit string");
+         return;
+      end if;
+
+      Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
+
+      if not Cert.Valid OR Seq_Size = 0 then
+         Put_Line ("FATAL: Invalid RSA public key sequence");
+         return;
+      end if;
+
+      --  Modulus
+      Parse_Integer (Cert_Slice, Index, Modulus_Size, Modulus, Cert);
+      Put_Line (" Modulus Bytes:");
+      Put_Key_Bytes (Modulus, Natural(Modulus_Size));
+
+      --  Exponent
+      Parse_Integer (Cert_Slice, Index, Exponent, Cert);
+   end Parse_RSA_Key;
+
+   --  Fwd declare and contracts
    procedure Parse_Public_Key (Cert_Slice : String;
                                Index      : in out Natural;
                                Cert       : in out Certificate)
@@ -952,33 +999,13 @@ is
                                Index      : in out Natural;
                                Cert       : in out Certificate)
    is
-      Integer_Size : Unsigned_32;
-      Key_Size     : Unsigned_32;
-      Seq_Size     : Unsigned_32;
-      Modulus      : Key_Bytes;
-      Exponent     : Unsigned_32;
    begin
       --  Format of the public key depends on the algorithm
       case Cert.Public_Key_Algorithm is
          when RSA_ENCRYPTION =>
             --  RSA public key is a Bit String containing a sequence of two
             --  integers, modulus and exponent
-            Parse_Bit_String (Cert_Slice, Index, Key_Size, Cert);
-
-            Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
-
-            Put_Line (" Sequence Size:" & Seq_Size'Image);
-
-            if not Cert.Valid then
-               Put_Line ("FATAL: Invalid RSA public key sequence");
-               return;
-            end if;
-
-            --  Modulus
-            Parse_Integer (Cert_Slice, Index, Integer_Size, Modulus, Cert);
-            Put_Line (" Size of Modulus: " & Integer_Size'Image);
-            --  Exponent
-            Parse_Integer (Cert_Slice, Index, Exponent, Cert);
+           Parse_RSA_Key (Cert_Slice, Index, Cert);
          when ID_EDDSA25519 =>
             --  Ed25519 public key is a bit string
             -- Parse_Bit_String (Cert_Slice, Index, 0, Modulus, Cert);
@@ -1057,13 +1084,7 @@ is
       Put_Line ("Certificate Version: " & Cert.Version'Image);
       Put ("Certificate Serial:  ");
 
-      for I in 1 .. Cert.Serial_Length loop
-         PB (Cert.Serial (I));
-
-         if I /= Cert.Serial'Last then
-            Put (":");
-         end if;
-      end loop;
+      Put_Serial (Cert.Serial, Cert.Serial_Length);
       New_Line;
 
       Put_Line ("Signature Algorithm: " & Cert.Signature_Algorithm'Image);

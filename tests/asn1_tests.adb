@@ -57,10 +57,24 @@ procedure ASN1_Tests is
    Cert3 : ASN1.Certificate;
 
 begin
+
+   Put_Line ("#########################");
+   Put_Line ("##### Certificate 1 #####");
+   Put_Line ("#########################");
    New_Line;
    Parse_Certificate (Decode (Construct (PEM1)), Cert1);
+   
+   New_Line;
+   Put_Line ("#########################");
+   Put_Line ("##### Certificate 2 #####");
+   Put_Line ("#########################");
    New_Line;
    Parse_Certificate (Decode (Construct (PEM2)), Cert2);
+
+   New_Line;
+   Put_Line ("#########################");
+   Put_Line ("##### Certificate 2 #####");
+   Put_Line ("#########################");
    New_Line;
    Parse_Certificate (Decode (Construct (PEM3)), Cert3);
 end ASN1_Tests;

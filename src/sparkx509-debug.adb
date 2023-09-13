@@ -38,6 +38,34 @@ package body SPARKx509.Debug is
       Put ("# ");
    end PB;
 
+   procedure Put_Key_Bytes (X : in Key_Bytes; L : in Natural)
+   is
+   begin
+      for I in 0 .. L - 1 loop
+         PB (X (I));
+            
+         if I mod 8 = 7 then
+            New_Line;
+         elsif I /= L then
+            Put (":");
+         end if;
+      end loop;
+      New_Line;
+   end Put_Key_Bytes;
+
+   procedure Put_Serial (X : in Serial_Number_Type; L : in Serial_Number_Length)
+   is
+   begin
+      for I in 1 .. L loop
+         PB (X (I));
+
+         if I /= L then
+            Put (":");
+         end if;
+      end loop;
+      New_Line;
+   end Put_Serial;
+
    procedure DH (S : in String; D : in Byte_Seq)
    is
    begin
