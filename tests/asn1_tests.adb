@@ -73,7 +73,7 @@ begin
 
    New_Line;
    Put_Line ("#########################");
-   Put_Line ("##### Certificate 2 #####");
+   Put_Line ("##### Certificate 3 #####");
    Put_Line ("#########################");
    New_Line;
    Parse_Certificate (Decode (Construct (PEM3)), Cert3);

@@ -1,4 +1,3 @@
-
 all: tests
 
 tests: *.ads *.adb ../src/*.ads ../src/*.adb tests.gpr
