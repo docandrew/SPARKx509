@@ -966,6 +966,8 @@ is
       Modulus         : Key_Bytes;
       Exponent        : Unsigned_32;
    begin
+      --  RSA public key is a Bit String containing a sequence of two
+      --  integers, modulus and exponent
       Parse_Bit_String (Cert_Slice, Index, Bit_String_Size, Cert);
 
       if not Cert.Valid or Bit_String_Size = 0 then
@@ -1003,8 +1005,6 @@ is
       --  Format of the public key depends on the algorithm
       case Cert.Public_Key_Algorithm is
          when RSA_ENCRYPTION =>
-            --  RSA public key is a Bit String containing a sequence of two
-            --  integers, modulus and exponent
            Parse_RSA_Key (Cert_Slice, Index, Cert);
          when ID_EDDSA25519 =>
             --  Ed25519 public key is a bit string

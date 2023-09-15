@@ -11,17 +11,17 @@ project sparkx509 is
 
    type Library_Type_Type is ("relocatable", "static", "static-pic");
    Library_Type : Library_Type_Type :=
-     external ("X509ADA_LIBRARY_TYPE", external ("LIBRARY_TYPE", "static"));
+     external ("SPARKX509_LIBRARY_TYPE", external ("LIBRARY_TYPE", "static"));
    for Library_Kind use Library_Type;
 
    type Enabled_Kind is ("enabled", "disabled");
-   Compile_Checks : Enabled_Kind := External ("X509ADA_COMPILE_CHECKS", "disabled");
-   Runtime_Checks : Enabled_Kind := External ("X509ADA_RUNTIME_CHECKS", "disabled");
-   Style_Checks : Enabled_Kind := External ("X509ADA_STYLE_CHECKS", "disabled");
-   Contracts_Checks : Enabled_Kind := External ("X509ADA_CONTRACTS", "disabled");
+   Compile_Checks : Enabled_Kind := External ("SPARKX509_COMPILE_CHECKS", "disabled");
+   Runtime_Checks : Enabled_Kind := External ("SPARKX509_RUNTIME_CHECKS", "disabled");
+   Style_Checks : Enabled_Kind := External ("SPARKX509_STYLE_CHECKS", "disabled");
+   Contracts_Checks : Enabled_Kind := External ("SPARKX509_CONTRACTS", "disabled");
 
    type Build_Kind is ("debug", "optimize");
-   Build_Mode : Build_Kind := External ("X509ADA_BUILD_MODE", "optimize");
+   Build_Mode : Build_Kind := External ("SPARKX509_BUILD_MODE", "optimize");
 
    Compile_Checks_Switches := ();
    case Compile_Checks is
