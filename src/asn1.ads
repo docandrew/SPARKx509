@@ -51,15 +51,18 @@ is
 
    type Key_Bytes is array (Natural range 0 .. 65535) of Unsigned_8;
 
+   --  Key parameters
+   ED25519_PUBLIC_KEY_SIZE : constant := 32;
+
    type Public_Key_Type (Key_Type : Algorithm_Identifier := RSA_ENCRYPTION) is record
       case Key_Type is
          when RSA_ENCRYPTION =>
-            Modulus_Length : Natural;
-            Modulus        : Key_Bytes;
-            Exponent       : Unsigned_32;
+            Modulus_Length  : Natural;
+            Modulus         : Key_Bytes;
+            Exponent        : Unsigned_32;
          when ID_EDDSA25519 =>
-            Key_Length     : Unsigned_32;
-            Key            : Key_Bytes;
+            Key_Size        : Natural;
+            Key             : Key_Bytes;
          when others =>
             null;
       end case;

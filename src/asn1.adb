@@ -479,31 +479,79 @@ is
    --  to parse the length field to determine how many bytes to read.
    procedure Parse_Integer (Cert_Slice : String;
                             Index      : in out Natural;
-                            Integer    : out Unsigned_32;
+                            Value      : out Integer;
                             Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
 
    procedure Parse_Integer (Cert_Slice : String;
                             Index      : in out Natural;
-                            Integer    : out Unsigned_32;
+                            Value      : out Integer;
                             Cert       : in out Certificate)
    is
-      Size : Unsigned_32;
+      Size : Natural;
+      Raw  : Unsigned_32 := 0;
    begin
       if not Cert.Valid then
-         Integer := 0;
+         Value := 0;
          return;
       end if;
 
-      Parse_Size (Cert_Slice, Index, Size, Cert);
-
-      if Size = 0 then
-         Integer := 0;
+      --  Check the tag
+      if Character'Pos (Cert_Slice (Index)) /= TYPE_INTEGER then
+         Put_Line ("FATAL: Expected Integer");
+         Value := 0;
          Cert.Valid := False;
          return;
       end if;
 
-      -- TODO - finish parsing
+      Index := Index + 1;
+
+      --  Parse the length field. For our purposes, we'll assume the length
+      --  field is a single byte. If it's not, then we'll balk. MSB must be
+      --  0, indicating a short form length.
+      if Character'Pos (Cert_Slice (Index)) > 127 then
+         Put_Line ("FATAL: Integer length too large");
+         Value := 0;
+         Cert.Valid := False;
+         return;
+      end if;
+
+      Size := Character'Pos (Cert_Slice (Index));
+
+      --  Furthermore, this function is intended for parsing small integers
+      --  like the version number, so we'll balk if the integer is too large.
+      if Size > 4 then
+         Put_Line ("FATAL: Integer too large for this function");
+         Value := 0;
+         Cert.Valid := False;
+         return;
+      end if;
+
+      if Size = 0 then
+         Put_Line ("FATAL: Zero-length integer specified");
+         Value := 0;
+         Cert.Valid := False;
+         return;
+      end if;
+
+      --  Read in raw bytes
+      Index := Index + 1;
+
+      for I in 0 .. Size - 1 loop
+         Raw := Raw or 
+                  Shift_Left (Unsigned_32 (Character'Pos (Cert_Slice (Index))), (8 * I));
+         Index := Index + 1;
+      end loop;
+
+      --  Is MSB 1? If so then we're dealing with a 2's complement negative
+      if (Raw and 16#80_00_00_00#) /= 0 then
+         --  We're dealing with a negative number. We need to invert the bits
+         --  and add 1 to get the absolute value.
+         Raw := not Raw + 1;
+         Value := - Integer (Raw);
+      else
+         Value := Integer (Raw);
+      end if;
    end Parse_Integer;
 
    --  Fwd declare and contracts
@@ -568,15 +616,18 @@ is
    --  Fwd declare and contracts
    procedure Parse_Bit_String (Cert_Slice : String;
                                Index      : in out Natural;
-                               Length     : out Unsigned_32;
+                               Length     : out Natural;
+                               Bytes      : out Key_Bytes;
                                Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
 
    procedure Parse_Bit_String (Cert_Slice : String;
                                Index      : in out Natural;
-                               Length     : out Unsigned_32;
+                               Length     : out Natural;
+                               Bytes      : out Key_Bytes;
                                Cert       : in out Certificate)
    is
+      Size : Unsigned_32;
       Unused_Bits : Unsigned_8;
    begin
       if not Cert.Valid then
@@ -592,10 +643,76 @@ is
 
       Index := Index + 1;
 
+      -- Expect length in bytes, then a single byte containing the number of unused
+      -- bits at the _end_ of the bit string.
+      Parse_Size (Cert_Slice, Index, Size, Cert);
+      
+      if Size = 0 then
+         Put_Line ("FATAL: Bit String length cannot be zero");
+         Cert.Valid := False;
+         return;
+      end if;
+
+      Unused_Bits := Character'Pos (Cert_Slice (Index));
+      Index := Index + 1;
+
+      --  Indicates malicious or corrupted certificate.
+      if Unused_Bits > 7 then
+         Put_Line ("FATAL: Excessive unused bits in bit string.");
+         Cert.Valid := False;
+         Length := 0;
+         return;
+      end if;
+
+      -- Adjust length to account for unused bits byte
+      Length := Natural (Size) - 1;
+   
+      Put_Line (" Bit String Size (bytes):" & Length'Image);
+      Put_Line (" Unused Bits: " & Unused_Bits'Image);
+
+      --  Read in the bytes
+      for I in 0 .. Length - 1 loop
+         Bytes (I) := Unsigned_8 (Character'Pos (Cert_Slice (Index)));
+         Index := Index + 1;
+      end loop;
+   end Parse_Bit_String;
+
+   --  Fwd declare and contracts
+   --  Parse_Bit_String_Header parses the header of a bit string, but does not
+   --  read in the bytes. This is useful for bit strings which are actually
+   --  sequences of other objects, like the public key.
+   --  @param Size is the size of the bit string in bytes, not including the
+   --     unused bits byte.
+   procedure Parse_Bit_String_Header (Cert_Slice : String;
+                                      Index      : in out Natural;
+                                      Size       : out Unsigned_32;
+                                      Cert       : in out Certificate);
+
+   procedure Parse_Bit_String_Header (Cert_Slice : String;
+                                      Index      : in out Natural;
+                                      Size       : out Unsigned_32;
+                                      Cert       : in out Certificate)
+   is
+      Unused_Bits : Unsigned_8;
+   begin
+      if not Cert.Valid then
+         Size := 0;
+         return;
+      end if;
+
+      if Character'Pos (Cert_Slice (Index)) /= TYPE_BITSTRING then
+         Put_Line ("FATAL: Expected a Bit String at " & Index'Image);
+         Cert.Valid := False;
+         return;
+      end if;
+
+      Index := Index + 1;
+
       -- Expect length, then a single byte containing the number of unused
       -- bits at the _end_ of the bit string.
-      Parse_Size (Cert_Slice, Index, Length, Cert);
-      Put_Line (" Bit String Size:" & Length'Image);
+      Parse_Size (Cert_Slice, Index, Size, Cert);
+      Size := Size - 1;
+      Put_Line (" Bit String Size:" & Size'Image);
 
       Unused_Bits := Character'Pos (Cert_Slice (Index));
       Index := Index + 1;
@@ -608,7 +725,7 @@ is
       end if;
 
       Put_Line (" Unused Bits: " & Unused_Bits'Image);
-   end Parse_Bit_String;
+   end Parse_Bit_String_Header;
 
    --  Fwd declare and contracts
    procedure Parse_Algorithm (Cert_Slice : String;
@@ -962,13 +1079,14 @@ is
    is
       Bit_String_Size : Unsigned_32;
       Seq_Size        : Unsigned_32;
+
       Modulus_Size    : Natural;
       Modulus         : Key_Bytes;
-      Exponent        : Unsigned_32;
+      Exponent        : Integer;
    begin
       --  RSA public key is a Bit String containing a sequence of two
       --  integers, modulus and exponent
-      Parse_Bit_String (Cert_Slice, Index, Bit_String_Size, Cert);
+      Parse_Bit_String_Header (Cert_Slice, Index, Bit_String_Size, Cert);
 
       if not Cert.Valid or Bit_String_Size = 0 then
          Put_Line ("FATAL: Invalid RSA public key bit string");
@@ -984,12 +1102,59 @@ is
 
       --  Modulus
       Parse_Integer (Cert_Slice, Index, Modulus_Size, Modulus, Cert);
+
+      Put_Line (" Cert still valid? " & Boolean'Image (Cert.Valid));
       Put_Line (" Modulus Bytes:");
       Put_Key_Bytes (Modulus, Natural(Modulus_Size));
-
       --  Exponent
       Parse_Integer (Cert_Slice, Index, Exponent, Cert);
+
+      if Exponent < 0 then
+         Put_Line ("FATAL: RSA public key exponent cannot be negative");
+         Cert.Valid := False;
+         return;
+      end if;
+
+      if Cert.Valid then
+         Cert.Public_Key.Modulus_Length := Natural (Modulus_Size);
+         Cert.Public_Key.Modulus := Modulus;
+         Cert.Public_Key.Exponent := Unsigned_32(Exponent);
+      end if;
    end Parse_RSA_Key;
+
+   --  Fwd declare and contracts
+   --  Parse_ED25519_Key
+   --  Parse an ED25519 public key. This is a bit string with the key
+   procedure Parse_ED25519_Key (Cert_Slice : String;
+                                Index      : in out Natural;
+                                Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+   
+   procedure Parse_ED25519_Key (Cert_Slice : String;
+                                Index      : in out Natural;
+                                Cert       : in out Certificate)
+   is
+      Length : Integer;
+      Key    : Key_Bytes;
+   begin
+
+      if not Cert.Valid then
+         return;
+      end if;
+
+      Parse_Bit_String (Cert_Slice, Index, Length, Key, Cert);
+
+      if not Cert.Valid or Length /= ED25519_PUBLIC_KEY_SIZE then
+         Put_Line ("FATAL: Invalid ED25519 public key bit string");
+         return;
+      end if;
+
+      Put_Line (" Key Bytes:");
+      Put_Key_Bytes (Key, Natural (Length));
+
+      Cert.Public_Key.Key := Key;
+      Cert.Public_Key.Key_Size := Natural (Length);
+   end Parse_ED25519_Key;
 
    --  Fwd declare and contracts
    procedure Parse_Public_Key (Cert_Slice : String;
@@ -1005,11 +1170,11 @@ is
       --  Format of the public key depends on the algorithm
       case Cert.Public_Key_Algorithm is
          when RSA_ENCRYPTION =>
-           Parse_RSA_Key (Cert_Slice, Index, Cert);
+            Cert.Public_Key := (Key_Type => RSA_ENCRYPTION, others => <>);
+            Parse_RSA_Key (Cert_Slice, Index, Cert);
          when ID_EDDSA25519 =>
-            --  Ed25519 public key is a bit string
-            -- Parse_Bit_String (Cert_Slice, Index, 0, Modulus, Cert);
-            null;
+            Cert.Public_Key := (Key_Type => ID_EDDSA25519, others => <>);
+            Parse_ED25519_Key (Cert_Slice, Index, Cert);
          when others =>
             Put_Line ("FATAL: Unsupported public key algorithm.");
             Cert.Valid := False;

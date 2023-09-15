@@ -3,6 +3,7 @@ lib/
 alire/
 config/
 scratch/
+tests/tests
 
 # Ignore generated .ads and .adb
 *b__*
