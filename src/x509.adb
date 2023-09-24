@@ -1225,6 +1225,7 @@ is
                               Cert       : in out Certificate)
    is
    begin
+      null;
    end Parse_Extension;
 
    -- Fwd declare and contracts
@@ -1237,17 +1238,18 @@ is
                                Index      : in out Natural;
                                Cert       : in out Certificate)
    is
+      Size : Unsigned_32;
       Extensions_Start : Natural;
    begin
       --  Expect a sequence of extensions
-      Parse_Sequence_Data (Cert_Slice, Index, Cert.Extensions_Size, Cert);
+      Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
 
       if not Cert.Valid then
          return;
       end if;
 
       --  Parse each extension
-      while Index < Cert.Extensions_Size + Extensions_Start loop
+      while Index < Cert.Extensions_Len + Extensions_Start loop
          Parse_Extension (Cert_Slice, Index, Cert);
       end loop;
    end Parse_Extensions;

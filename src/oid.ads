@@ -156,7 +156,7 @@ is
       PKIX_IP_ADDR_BLOCKS,             -- 1.3.6.1.5.5.7.1.7 IP Address Blocks RFC 3779
       PKIX_AUTONOMOUS_SYSTEM,          -- 1.3.6.1.5.5.7.1.8 Autonomous System Identifiers RFC 3779
       -- PKIX_ROUTER_IDENTIFIER,       -- 1.3.6.1.5.5.7.1.9 Router Identifiers (OBSOLETE)
-      PKIX_AC-PROXYING,                -- 1.3.6.1.5.5.7.1.10 RFC3281
+      PKIX_AC_PROXYING,                -- 1.3.6.1.5.5.7.1.10 RFC3281
       PKIX_SUBJECTINFOACCESS,          -- 1.3.6.1.5.5.7.1.11 RFC3280
       PKIX_LOGOTYPE,                   -- 1.3.6.1.5.5.7.1.12 RFC3709
       PKIX_WLANSSID,                   -- 1.3.6.1.5.5.7.1.13 RFC4334
