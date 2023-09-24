@@ -244,6 +244,9 @@ is
    HOLDER_NAME_CONSTRAINTS_STR : constant String := To_String (
       (16#55#, 16#1D#, 16#45#));
 
+   -- PKIX Extensions
+   
+
    --  Instead of gonkulating the actual object ID string, we just compare
    --  packed byte representations.
    function Lookup (Packed : String) return Object_ID is

@@ -4,7 +4,7 @@ with Interfaces; use Interfaces;
 
 with OID; use OID;
 
-package ASN1 with
+package X509 with
    SPARK_Mode
 is
    --  X.509 strings are defined with upper-bounds, per RFC 5280
@@ -80,6 +80,7 @@ is
    -- @field Public_Key_Algorithm is the algorithm for the public key
    -- @field Public_Key_Len is the length of the public key, in bytes
    -- @field Public_Key are the actual bytes of the public key
+   -- @field Extensions_Len is the size of the extensions, in bytes
    type Certificate is record
       Valid                : Boolean;
       Version              : Integer;
@@ -92,6 +93,7 @@ is
       Valid_To             : Time;
       Public_Key_Algorithm : Algorithm_Identifier;
       Public_Key           : Public_Key_Type;
+      Extensions_Len       : Natural;
    end record;
 
    ---------------------------------------------------------------------------
@@ -99,4 +101,4 @@ is
    ---------------------------------------------------------------------------
    procedure Parse_Certificate (Cert_Bytes : String; Cert : out Certificate);
 
-end ASN1;
+end X509;

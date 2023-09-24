@@ -4,7 +4,7 @@ with Ada.Text_IO; use Ada.Text_IO;
 with OID;
 with SPARKx509.Debug; use SPARKx509.Debug;
 
-package body ASN1 with
+package body X509 with
    SPARK_Mode
 is
    TYPE_BOOLEAN     : constant := 16#01#;
@@ -1214,6 +1214,44 @@ is
       Parse_Public_Key (Cert_Slice, Index, Cert);
    end Parse_Public_Key_Info;
 
+   -- Fwd declare and contracts
+   procedure Parse_Extension (Cert_Slice : String;
+                              Index      : in out Natural;
+                              Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+   
+   procedure Parse_Extension (Cert_Slice : String;
+                              Index      : in out Natural;
+                              Cert       : in out Certificate)
+   is
+   begin
+   end Parse_Extension;
+
+   -- Fwd declare and contracts
+   procedure Parse_Extensions (Cert_Slice : String;
+                               Index      : in out Natural;
+                               Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+   
+   procedure Parse_Extensions (Cert_Slice : String;
+                               Index      : in out Natural;
+                               Cert       : in out Certificate)
+   is
+      Extensions_Start : Natural;
+   begin
+      --  Expect a sequence of extensions
+      Parse_Sequence_Data (Cert_Slice, Index, Cert.Extensions_Size, Cert);
+
+      if not Cert.Valid then
+         return;
+      end if;
+
+      --  Parse each extension
+      while Index < Cert.Extensions_Size + Extensions_Start loop
+         Parse_Extension (Cert_Slice, Index, Cert);
+      end loop;
+   end Parse_Extensions;
+
    --  Fwd declare and contracts
    procedure Parse_Cert_Info (Cert_Slice : String;
                               Index      : in out Natural;
@@ -1237,6 +1275,7 @@ is
       Parse_Validity_Period (Cert_Slice, Index, Cert);
       Parse_Subject (Cert_Slice, Index, Cert);
       Parse_Public_Key_Info (Cert_Slice, Index, Cert);
+      Parse_Extensions (Cert_Slice, Index, Cert);
 
       if not Cert.Valid then
          Put_Line ("Parse Error.");
@@ -1280,4 +1319,4 @@ is
       Parse_Cert_Info (Cert_Bytes, Index, Cert);
    end Parse_Certificate;
 
-end ASN1;
+end X509;

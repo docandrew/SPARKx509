@@ -1,7 +1,7 @@
 with Ada.Text_IO; use Ada.Text_IO;
 with Interfaces; use Interfaces;
 
-with ASN1_Tests;
+with X509_Tests;
 with Base64_Tests;
 
 procedure Tests is
@@ -65,6 +65,6 @@ procedure Tests is
 begin
 
    Base64_Tests;
-   ASN1_Tests;
+   X509_Tests;
 
 end Tests;

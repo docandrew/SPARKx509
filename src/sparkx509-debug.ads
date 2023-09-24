@@ -1,6 +1,6 @@
 with Interfaces; use Interfaces;
 with SPARKx509; use SPARKx509;
-with ASN1; use ASN1;
+with x509; use x509;
 
 package SPARKx509.Debug is
 

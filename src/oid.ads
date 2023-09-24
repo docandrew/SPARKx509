@@ -1,6 +1,9 @@
 package OID 
    with SPARK_Mode
 is
+   -- Not every object identifier is supported. Some additional ones
+   -- are included here for completeness and future expansion, but only
+   -- those 
    type Object_ID is (
       --  Catch-all for object IDs we don't support or recognize
       UNKNOWN,
@@ -51,6 +54,177 @@ is
       ID_EDDSA448,                     --  1.3.101.113
       ID_EDDSA25519_PH,                --  1.3.101.114
       ID_EDDSA448_PH,                  --  1.3.101.115
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 4 Private
+
+      -- Reference RFC 7299 for the following object identifiers
+   
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 0 Module Identifiers
+      PKIX1_EXPLICIT_88,               -- 1.3.6.1.5.5.7.0.1 RFC2459
+      PKIX1_IMPLICIT_88,               -- 1.3.6.1.5.5.7.0.2 RFC2459
+      PKIX1_EXPLICIT_93,               -- 1.3.6.1.5.5.7.0.3 RFC2459
+      PKIX1_IMPLICIT_93,               -- 1.3.6.1.5.5.7.0.4 RFC2459
+      PKIX_MOD_CRMF,                   -- 1.3.6.1.5.5.7.0.5 RFC2511
+      PKIX_MOD_CMC,                    -- 1.3.6.1.5.5.7.0.6 RFC2797
+      PKIX_MOD_KEA_PROFILE_88,         -- 1.3.6.1.5.5.7.0.7 RFC2528
+      PKIX_MOD_KEA_PROFILE_93,         -- 1.3.6.1.5.5.7.0.8 RFC2528
+      PKIX_MOD_CMP,                    -- 1.3.6.1.5.5.7.0.9 RFC2510
+      PKIX_MOD_QUALIFIED_CERT_88,      -- 1.3.6.1.5.5.7.0.10 RFC3039
+      PKIX_MOD_QUALIFIED_CERT_93,      -- 1.3.6.1.5.5.7.0.11 RFC3039
+      PKIX_MOD_ATTRIBUTE_CERT,         -- 1.3.6.1.5.5.7.0.12 RFC3281
+      PKIX_MOD_TSP,                    -- 1.3.6.1.5.5.7.0.13 RFC3161
+      PKIX_MOD_OCSP,                   -- 1.3.6.1.5.5.7.0.14 RFC3029
+      PKIX_MOD_DVCS,                   -- 1.3.6.1.5.5.7.0.15 RFC3029
+      PKIX_MOD_CMP2000,                -- 1.3.6.1.5.5.7.0.16 RFC4210
+      PKIX_MOD_PKIX1_ALGORITHMS,       -- 1.3.6.1.5.5.7.0.17 RFC3279
+      PKIX_MOD_PKIX1_EXPLICIT,         -- 1.3.6.1.5.5.7.0.18 RFC3280
+      PKIX_MOD_PKIX1_IMPLICIT,         -- 1.3.6.1.5.5.7.0.19 RFC3280
+      -- PKIX_MOD_USER_GROUP,          -- 1.3.6.1.5.5.7.0.20 RESERVED AND OBSOLETE
+      PKIX_MOD_SCVP,                   -- 1.3.6.1.5.5.7.0.21 RFC5055
+      PKIX_MOD_LOGOTYPE,               -- 1.3.6.1.5.5.7.0.22 RFC3709
+      PKIX_MOD_CMC2002,                -- 1.3.6.1.5.5.7.0.23 RFC5272
+      PKIX_MOD_WLAN_EXTNS,             -- 1.3.6.1.5.5.7.0.24 RFC3770
+      PKIX_MOD_PROXY_CERT_EXTNS,       -- 1.3.6.1.5.5.7.0.25 RFC3820
+      PKIX_MOD_AC_POLICIES,            -- 1.3.6.1.5.5.7.0.26 RFC4476
+      PKIX_MOD_WARRANTY_EXTN,          -- 1.3.6.1.5.5.7.0.27 RFC4059
+      PKIX_MOD_PERM_ID_88,             -- 1.3.6.1.5.5.7.0.28 RFC4043
+      PKIX_MOD_PERM_ID_93,             -- 1.3.6.1.5.5.7.0.29 RFC4043
+      PKIX_MOD_IP_ADDR_AND_AS_IDENT,   -- 1.3.6.1.5.5.7.0.30 RFC3779
+      PKIX_MOD_QUALIFIED_CERT,         -- 1.3.6.1.5.5.7.0.31 RFC3739
+      -- PKIX_MOD_CRMF2003,            -- 1.3.6.1.5.5.7.0.32 RESERVED AND OBSOLETE
+      PKIX_MOD_PKIX1_RSA_PKALGS,       -- 1.3.6.1.5.5.7.0.33 RFC4055
+      PKIX_MOD_CERT_BUNDLE,            -- 1.3.6.1.5.5.7.0.34 RFC4306
+      PKIX_MOD_QUALIFIED_CERT_97,      -- 1.3.6.1.5.5.7.0.35 RFC3739
+      PKIX_MOD_CRMF2005,               -- 1.3.6.1.5.5.7.0.36 RFC4210
+      PKIX_MOD_WLAN_EXTNS2005,         -- 1.3.6.1.5.5.7.0.37 RFC4334
+      PKIX_MOD_SIM2005,                -- 1.3.6.1.5.5.7.0.38 RFC4683
+      PKIX_MOD_DNS_SRV_NAME_88,        -- 1.3.6.1.5.5.7.0.39 RFC4985
+      PKIX_MOD_DNS_SRV_NAME_93,        -- 1.3.6.1.5.5.7.0.40 RFC4985
+      PKIX_MOD_CMSCONTENTCONSTR_88,    -- 1.3.6.1.5.5.7.0.41 RFC6010
+      PKIX_MOD_CMSCONTENTCONSTR_93,    -- 1.3.6.1.5.5.7.0.42 RFC6010
+      -- PKIX_MOD_PKIXCOMMON,          -- 1.3.6.1.5.5.7.0.43 RESERVED AND OBSOLETE
+      PKIX_MOD_PKIXOTHERCERTS,         -- 1.3.6.1.5.5.7.0.44 RFC5697
+      PKIX_MOD_PKIX1_ALGORITHMS2008,   -- 1.3.6.1.5.5.7.0.45 RFC5480
+      PKIX_MOD_CLEARANCECONSTRAINTS,   -- 1.3.6.1.5.5.7.0.46 RFC5913
+      PKIX_MOD_ATTRIBUTE_CERT_02,      -- 1.3.6.1.5.5.7.0.47 RFC5912
+      PKIX_MOD_OCSP_02,                -- 1.3.6.1.5.5.7.0.48 RFC5912
+      PKIX_MOD_V1ATTRCERT_02,          -- 1.3.6.1.5.5.7.0.49 RFC5912
+      PKIX_MOD_CMP2000_02,             -- 1.3.6.1.5.5.7.0.50 RFC5912
+      PKIX_MOD_PKIX1_EXPLICIT_02,      -- 1.3.6.1.5.5.7.0.51 RFC5912
+      PKIX_MOD_SCVP_02,                -- 1.3.6.1.5.5.7.0.52 RFC5912
+      PKIX_MOD_CMC2002_02,             -- 1.3.6.1.5.5.7.0.53 RFC5912
+      PKIX_MOD_PKIX1_RSA_PKALGS_02,    -- 1.3.6.1.5.5.7.0.54 RFC5912
+      PKIX_MOD_CRMF2005_02,            -- 1.3.6.1.5.5.7.0.55 RFC5912
+      PKIX_MOD_PKIX1_ALGORITHMS2008_02,-- 1.3.6.1.5.5.7.0.56 RFC5912
+      PKIX_MOD_PKIXCOMMON_02,          -- 1.3.6.1.5.5.7.0.57 RFC5912
+      PKIX_MOD_ALGORITHMINFORMATION_02,-- 1.3.6.1.5.5.7.0.58 RFC5912
+      PKIX_MOD_PKIX1_IMPLICIT_02,      -- 1.3.6.1.5.5.7.0.59 RFC5912
+      PKIX_MOD_PKIX1_X400ADDRESS_02,   -- 1.3.6.1.5.5.7.0.60 RFC5912
+      PKIX_MOD_ATTRIBUTE_CERT_V2,      -- 1.3.6.1.5.5.7.0.61 RFC5755
+      PKIX_MOD_SIP_DOMAIN_EXTNS2007,   -- 1.3.6.1.5.5.7.0.62 RFC5924
+      PKIX_MOD_CMS_OTHERRIS_2009_88,   -- 1.3.6.1.5.5.7.0.63 RFC5940
+      PKIX_MOD_CMS_OTHERRIS_2009_93,   -- 1.3.6.1.5.5.7.0.64 RFC5940
+      PKIX_MOD_ECPRIVATEKEY,           -- 1.3.6.1.5.5.7.0.65 RFC5915
+      PKIX_MOD_OCSP_AGILITY_2009_93,   -- 1.3.6.1.5.5.7.0.66 RFC6277
+      PKIX_MOD_OCSP_AGILITY_2009_88,   -- 1.3.6.1.5.5.7.0.67 RFC6277
+      PKIX_MOD_LOGOTYPE_CERTIMAGE,     -- 1.3.6.1.5.5.7.0.68 RFC6170
+      PKIX_MOD_PKCS10_2009,            -- 1.3.6.1.5.5.7.0.69 RFC5912
+      PKIX_MOD_DNS_RESOURCE_RECORD,    -- 1.3.6.1.5.5.7.0.70 ABLEY DNSSEC Trust Anchor Pub for Root Zone
+      PKIX_MOD_SEND_CERT_EXTNS,        -- 1.3.6.1.5.5.7.0.71 RFC6494
+      PKIX_MOD_IP_ADDR_AND_PKIXENT_2,  -- 1.3.6.1.5.5.7.0.72 RFC6268
+      PKIX_MOD_WLAN_EXTNS_2,           -- 1.3.6.1.5.5.7.0.73 RFC6268
+      PKIX_MOD_HMAC,                   -- 1.3.6.1.5.5.7.0.74 RFC6268
+      PKIX_MOD_ENROLLMSGSYNTAX_2011_88,-- 1.3.6.1.5.5.7.0.75 RFC6402 ERR3860
+      PKIX_MOD_ENROLLMSGSYNTAX_2011_08,-- 1.3.6.1.5.5.7.0.76 RFC6402
+      PKIX_MOD_PUBKEYSMIMECAPS_88,     -- 1.3.6.1.5.5.7.0.77 RFC6664
+      PKIX_MOD_PUBKEYSMIMECAPS_08,     -- 1.3.6.1.5.5.7.0.78 RFC6664
+      PKIX_MOD_DHSIGN_2012_88,         -- 1.3.6.1.5.5.7.0.79 RFC6955
+      PKIX_MOD_DHSIGN_2012_08,         -- 1.3.6.1.5.5.7.0.80 RFC6955
+      PKIX_MOD_OCSP_2013_88,           -- 1.3.6.1.5.5.7.0.81 RFC6960
+      PKIX_MOD_OCSP_2013_08,           -- 1.3.6.1.5.5.7.0.82 RFC6960
+      PKIX_MOD_TEST_CERTPOLICIES,      -- 1.3.6.1.5.5.7.0.83 RFC7229
+      PKIX_MOD_BGPSEC_EKU,             -- 1.3.6.1.5.5.7.0.84 Profile for BGPSEC Router Certificates, CRLs and CRs
+     
+     -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 1 PKIX Extensions
+     
+      PKIX_AUTHORITY_INFO_ACCESS,      -- 1.3.6.1.5.5.7.1.1 CA Information Access RFC 2459
+      PKIX_BIOMETRIC_INFO,             -- 1.3.6.1.5.5.7.1.2 Biometric Info RFC 3039
+      PKIX_QC_STATEMENTS,              -- 1.3.6.1.5.5.7.1.3 Qualified Certificate Statements RFC 3039
+      PKIX_AUDIT_IDENTITY,             -- 1.3.6.1.5.5.7.1.4 Private extension auditIdentity RFC 3281
+      -- PKIX_AC_TARGETING,            -- 1.3.6.1.5.5.7.1.5 Private extention acTargeting? (OBSOLETE)
+      PKIX_AA_CONTROLS,                -- 1.3.6.1.5.5.7.1.6 Attribute Authority Controls, Attribute Certificate Validation
+      PKIX_IP_ADDR_BLOCKS,             -- 1.3.6.1.5.5.7.1.7 IP Address Blocks RFC 3779
+      PKIX_AUTONOMOUS_SYSTEM,          -- 1.3.6.1.5.5.7.1.8 Autonomous System Identifiers RFC 3779
+      -- PKIX_ROUTER_IDENTIFIER,       -- 1.3.6.1.5.5.7.1.9 Router Identifiers (OBSOLETE)
+      PKIX_AC-PROXYING,                -- 1.3.6.1.5.5.7.1.10 RFC3281
+      PKIX_SUBJECTINFOACCESS,          -- 1.3.6.1.5.5.7.1.11 RFC3280
+      PKIX_LOGOTYPE,                   -- 1.3.6.1.5.5.7.1.12 RFC3709
+      PKIX_WLANSSID,                   -- 1.3.6.1.5.5.7.1.13 RFC4334
+      PKIX_PROXYCERTINFO,              -- 1.3.6.1.5.5.7.1.14 RFC3820
+      PKIX_ACPOLICIES,                 -- 1.3.6.1.5.5.7.1.15 RFC4476
+      PKIX_WARRANTY,                   -- 1.3.6.1.5.5.7.1.16 RFC4059
+      -- PKIX_SIM,                     -- 1.3.6.1.5.5.7.1.17 RESERVED AND OBSOLETE
+      PKIX_CMSCONTENTCONSTRAINTS,      -- 1.3.6.1.5.5.7.1.18 RFC6010
+      PKIX_OTHERCERTS,                 -- 1.3.6.1.5.5.7.1.19 RFC5697
+      PKIX_WRAPPEDAPEXCONTINKEY,       -- 1.3.6.1.5.5.7.1.20 RFC5934
+      PKIX_CLEARANCECONSTRAINTS,       -- 1.3.6.1.5.5.7.1.21 RFC5913
+      -- PKIX_SKISEMANTICS,            -- 1.3.6.1.5.5.7.1.22 RESERVED AND OBSOLETE
+      PKIX_NSA,                        -- 1.3.6.1.5.5.7.1.23 RFC7169
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 2 PKIX Policy Qualifiers / SMI Security
+      
+      PKIX_CPS,                        -- 1.3.6.1.5.5.7.2.1 RFC2459
+      PKIX_UNOTICE,                    -- 1.3.6.1.5.5.7.2.2 RFC2459
+      PKIX_TEXTNOTICE,                 -- 1.3.6.1.5.5.7.2.3 RESERVED AND OBSOLETE
+      PKIX_ACPS,                       -- 1.3.6.1.5.5.7.2.4 RFC4476
+      PKIX_ACUNOTICE,                  -- 1.3.6.1.5.5.7.2.5 RFC4476
+
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 3 Extended Key Purpose Identifiers
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 4 CMP Information Types
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 5 CRMF Registration
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 6 Algorithms
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 7 CMC Controls
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 8 Other name forms
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 9 Personal Data Attribute
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 10 Attribute Certificate Attributes
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 11 Qualified Certificate Statements
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 12 CMC Content Types
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 13 OIDs for Testing ONLY
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 14 Certificate Policies
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 15 CMC Error Types
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 16 Revocation Information Types
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 17 SCVP Check Type
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 18 SCVP Want Back Types
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 19 SCVP Validation Policies
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 20 Other Logotype Identifiers
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 21 Proxy Certificate Policy Languages
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 22 Matching Rules
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 23 Subject Key Identifier Semantics
+
+      -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 48 Access Descriptors
+
+      
 
       --  Distinguished Name Components
       

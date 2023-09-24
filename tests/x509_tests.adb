@@ -3,9 +3,9 @@ with Interfaces; use Interfaces;
 
 with Test_Cases; use Test_Cases;
 with Base64; use Base64;
-with ASN1; use ASN1;
+with X509; use X509;
 
-procedure ASN1_Tests is
+procedure X509_Tests is
    PEM1 : constant String := 
       "MIIBfzCCATGgAwIBAgIUfI5kSdcO2S0+LkpdL3b2VUJG10YwBQYDK2VwMDUxCzAJ" &
       "BgNVBAYTAklUMQ8wDQYDVQQHDAZNaWxhbm8xFTATBgNVBAMMDFRlc3QgZWQyNTUx" &
@@ -52,9 +52,9 @@ procedure ASN1_Tests is
       "PfZ+G6Z6h7mjem0Y+iWlkYcV4PIWL1iwBi8saCbGS5jN2p8M+X+Q7UNKEkROb3N6" &
       "KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==";
 
-   Cert1 : ASN1.Certificate;
-   Cert2 : ASN1.Certificate;
-   Cert3 : ASN1.Certificate;
+   Cert1 : X509.Certificate;
+   Cert2 : X509.Certificate;
+   Cert3 : X509.Certificate;
 
 begin
 
@@ -77,4 +77,4 @@ begin
    Put_Line ("#########################");
    New_Line;
    Parse_Certificate (Decode (Construct (PEM3)), Cert3);
-end ASN1_Tests;
+end X509_Tests;
