@@ -1,5 +1,10 @@
+
+with Ada.Exceptions;
 with Ada.Text_IO; use Ada.Text_IO;
+
 with Interfaces; use Interfaces;
+
+with GNAT.Traceback.Symbolic;
 
 with X509_Tests;
 with Base64_Tests;
@@ -66,5 +71,12 @@ begin
 
    Base64_Tests;
    X509_Tests;
+
+exception
+   when E : others =>
+      Put_Line (Ada.Exceptions.Exception_Message (E));
+      Put_Line (Ada.Exceptions.Exception_Name (E));
+      Put_Line (GNAT.Traceback.Symbolic.Symbolic_Traceback (E));
+      raise;
 
 end Tests;

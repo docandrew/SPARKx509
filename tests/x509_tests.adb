@@ -3,7 +3,9 @@ with Interfaces; use Interfaces;
 
 with Test_Cases; use Test_Cases;
 with Base64; use Base64;
+
 with X509; use X509;
+with X509.Certificates; use X509.Certificates;
 
 procedure X509_Tests is
    PEM1 : constant String := 
@@ -52,9 +54,9 @@ procedure X509_Tests is
       "PfZ+G6Z6h7mjem0Y+iWlkYcV4PIWL1iwBi8saCbGS5jN2p8M+X+Q7UNKEkROb3N6" &
       "KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==";
 
-   Cert1 : X509.Certificate;
-   Cert2 : X509.Certificate;
-   Cert3 : X509.Certificate;
+   Cert1 : Certificate;
+   Cert2 : Certificate;
+   Cert3 : Certificate;
 
 begin
 

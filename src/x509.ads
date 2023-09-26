@@ -1,5 +1,5 @@
-with Ada.Calendar; use Ada.Calendar;
 with Ada.Strings.Bounded; use Ada.Strings.Bounded;
+with Ada.Calendar; use Ada.Calendar;
 with Interfaces; use Interfaces;
 
 with OID; use OID;
@@ -93,12 +93,14 @@ is
       Valid_To             : Time;
       Public_Key_Algorithm : Algorithm_Identifier;
       Public_Key           : Public_Key_Type;
-      Extensions_Len       : Natural;
+
+      --  Extensions
+      --  Basic Constraints
+      Basic_Constraints    : Boolean := False;
+      Path_Len_Constraint  : Natural := 0;
+
+      --  Subject Key Identifier
+      Subject_Key_Id       : Key_Bytes := (others => 0);
+      Subject_Key_Id_Len   : Natural := 0;
    end record;
-
-   ---------------------------------------------------------------------------
-   -- Parse_Certificate
-   ---------------------------------------------------------------------------
-   procedure Parse_Certificate (Cert_Bytes : String; Cert : out Certificate);
-
 end X509;
