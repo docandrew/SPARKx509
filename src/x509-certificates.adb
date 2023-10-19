@@ -241,7 +241,7 @@ package body X509.Certificates is
          return;
       else
          Algorithm := Algorithm_Identifier (Object_ID);
-         Cert.Signature_Algorithm := Algorithm;
+         --  Cert.Signature_Algorithm := Algorithm;
       end if;
 
       -- Depends on signature algorithm
@@ -260,29 +260,33 @@ package body X509.Certificates is
    --  Fwd declare and contracts
    procedure Parse_Signature_Algorithm (Cert_Slice : String;
                                         Index      : in out Natural;
+                                        Algorithm  : in out Algorithm_Identifier;
                                         Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
    
    procedure Parse_Signature_Algorithm (Cert_Slice : String;
                                         Index      : in out Natural;
+                                        Algorithm  : in out Algorithm_Identifier;
                                         Cert       : in out Certificate)
    is
    begin
-      Parse_Algorithm (Cert_Slice, Index, Cert.Signature_Algorithm, Cert);
+      Parse_Algorithm (Cert_Slice, Index, Algorithm, Cert);
    end Parse_Signature_Algorithm;
 
    --  Fwd declare and contracts
    procedure Parse_Public_Key_Algorithm (Cert_Slice : String;
                                          Index      : in out Natural;
-                                         Cert       : in out Certificate)
+                                         Cert       : in out Certificate;
+                                         Algorithm  : in out Algorithm_Identifier)
       with Pre => Index in Cert_Slice'Range;                                         
    
    procedure Parse_Public_Key_Algorithm (Cert_Slice : String;
                                          Index      : in out Natural;
-                                         Cert       : in out Certificate)
+                                         Cert       : in out Certificate;
+                                         Algorithm  : in out Algorithm_Identifier)
    is
    begin
-      Parse_Algorithm (Cert_Slice, Index, Cert.Public_Key_Algorithm, Cert);
+      Parse_Algorithm (Cert_Slice, Index, Algorithm, Cert);
    end Parse_Public_Key_Algorithm;
 
    --  Fwd declare and contracts
@@ -431,12 +435,14 @@ package body X509.Certificates is
    --  Fwd declare and contracts
    procedure Parse_RSA_Key (Cert_Slice : String;
                             Index      : in out Natural;
-                            Cert       : in out Certificate)
+                            Cert       : in out Certificate;
+                            PKey       : in out Public_Key_Type)
       with Pre => Index in Cert_Slice'Range;
    
    procedure Parse_RSA_Key (Cert_Slice : String;
                             Index      : in out Natural;
-                            Cert       : in out Certificate)
+                            Cert       : in out Certificate;
+                            PKey       : in out Public_Key_Type)
    is
       Bit_String_Size : Unsigned_32;
       Seq_Size        : Unsigned_32;
@@ -477,9 +483,9 @@ package body X509.Certificates is
       end if;
 
       if Cert.Valid then
-         Cert.Public_Key.Modulus_Length := Natural (Modulus_Size);
-         Cert.Public_Key.Modulus := Modulus;
-         Cert.Public_Key.Exponent := Unsigned_32(Exponent);
+         PKey.Modulus_Length := Natural (Modulus_Size);
+         PKey.Modulus := Modulus;
+         PKey.Exponent := Unsigned_32(Exponent);
       end if;
    end Parse_RSA_Key;
 
@@ -488,12 +494,14 @@ package body X509.Certificates is
    --  Parse an ED25519 public key. This is a bit string with the key
    procedure Parse_ED25519_Key (Cert_Slice : String;
                                 Index      : in out Natural;
-                                Cert       : in out Certificate)
+                                Cert       : in out Certificate;
+                                PKey       : in out Public_Key_Type)
       with Pre => Index in Cert_Slice'Range;
    
    procedure Parse_ED25519_Key (Cert_Slice : String;
                                 Index      : in out Natural;
-                                Cert       : in out Certificate)
+                                Cert       : in out Certificate;
+                                PKey       : in out Public_Key_Type)
    is
       Length : Integer;
       Key    : Key_Bytes;
@@ -513,43 +521,43 @@ package body X509.Certificates is
       Put_Line (" Key Bytes:");
       Put_Key_Bytes (Key, Natural (Length));
 
-      Cert.Public_Key.Key := Key;
-      Cert.Public_Key.Key_Size := Natural (Length);
+      PKey.Key := Key;
+      PKey.Key_Size := Natural (Length);
    end Parse_ED25519_Key;
 
    --  Fwd declare and contracts
-   procedure Parse_Public_Key (Cert_Slice : String;
-                               Index      : in out Natural;
-                               Cert       : in out Certificate)
+   procedure Parse_Subject_Public_Key (Cert_Slice : String;
+                                       Index      : in out Natural;
+                                       Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
 
-   procedure Parse_Public_Key (Cert_Slice : String;
-                               Index      : in out Natural;
-                               Cert       : in out Certificate)
+   procedure Parse_Subject_Public_Key (Cert_Slice : String;
+                                       Index      : in out Natural;
+                                       Cert       : in out Certificate)
    is
    begin
       --  Format of the public key depends on the algorithm
-      case Cert.Public_Key_Algorithm is
+      case Cert.Subject_Public_Key_Algorithm is
          when RSA_ENCRYPTION =>
-            Cert.Public_Key := (Key_Type => RSA_ENCRYPTION, others => <>);
-            Parse_RSA_Key (Cert_Slice, Index, Cert);
+            Cert.Subject_Public_Key := (Key_Type => RSA_ENCRYPTION, others => <>);
+            Parse_RSA_Key (Cert_Slice, Index, Cert, Cert.Subject_Public_Key);
          when ID_EDDSA25519 =>
-            Cert.Public_Key := (Key_Type => ID_EDDSA25519, others => <>);
-            Parse_ED25519_Key (Cert_Slice, Index, Cert);
+            Cert.Subject_Public_Key := (Key_Type => ID_EDDSA25519, others => <>);
+            Parse_ED25519_Key (Cert_Slice, Index, Cert, Cert.Subject_Public_Key);
          when others =>
             Put_Line ("FATAL: Unsupported public key algorithm.");
             Cert.Valid := False;
             return;
       end case;
-   end Parse_Public_Key;
+   end Parse_Subject_Public_Key;
 
    --  Fwd declare and contracts
-   procedure Parse_Public_Key_Info (Cert_Slice : String;
+   procedure Parse_Subject_Public_Key_Info (Cert_Slice : String;
                                             Index      : in out Natural;
                                             Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
 
-   procedure Parse_Public_Key_Info (Cert_Slice : String;
+   procedure Parse_Subject_Public_Key_Info (Cert_Slice : String;
                                             Index      : in out Natural;
                                             Cert       : in out Certificate)
    is
@@ -566,14 +574,14 @@ package body X509.Certificates is
          return;
       end if;
 
-      Parse_Public_Key_Algorithm (Cert_Slice, Index, Cert);
+      Parse_Public_Key_Algorithm (Cert_Slice, Index, Cert, Cert.Subject_Public_Key_Algorithm);
 
       if not Cert.Valid then
          return;
       end if;
 
-      Parse_Public_Key (Cert_Slice, Index, Cert);
-   end Parse_Public_Key_Info;
+      Parse_Subject_Public_Key (Cert_Slice, Index, Cert);
+   end Parse_Subject_Public_Key_Info;
 
    --  Fwd declare and contracts
    procedure Parse_Extensions_Header (Cert_Slice : String;
@@ -652,6 +660,34 @@ package body X509.Certificates is
    end Parse_Extensions;
 
    --  Fwd declare and contracts
+   procedure Parse_TBS_Certificate (Cert_Slice : String;
+                                    Index      : in out Natural;
+                                    Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+
+   procedure Parse_TBS_Certificate (Cert_Slice : String;
+                                    Index      : in out Natural;
+                                    Cert       : in out Certificate)
+   is
+   begin
+      --  Expect a constructed universal type sequence with
+      --  Version, Serial Number, Signature Algorithm, Issuer, 
+      --   Validity, Subject, Subject Key Info, Extensions
+      Parse_Version (Cert_Slice, Index, Cert);
+      Parse_Serial (Cert_Slice, Index, Cert);
+      Parse_Signature_Algorithm (Cert_Slice, Index, Cert.Signature_Algorithm, Cert);
+      Parse_Issuer (Cert_Slice, Index, Cert);
+      Parse_Validity_Period (Cert_Slice, Index, Cert);
+      Parse_Subject (Cert_Slice, Index, Cert);
+      Parse_Subject_Public_Key_Info (Cert_Slice, Index, Cert);
+      -- Issuer and subject unique ID are deprecated.
+      -- Extensions are optional
+      if Character'Pos (Cert_Slice (Index)) = TYPE_EXTENSIONS then
+         Parse_Extensions (Cert_Slice, Index, Cert);
+      end if;
+   end Parse_TBS_Certificate;
+
+   --  Fwd declare and contracts
    procedure Parse_Cert_Info (Cert_Slice : String;
                               Index      : in out Natural;
                               Cert       : in out Certificate)
@@ -663,18 +699,14 @@ package body X509.Certificates is
    is
       Size : Unsigned_32;
    begin
-      --  Expect a constructed universal type sequence with
-      --  Version, Serial Number, Signature Algorithm, Issuer, 
-      --   Validity, Subject, Subject Key Info, Extensions
+
       Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
-      Parse_Version (Cert_Slice, Index, Cert);
-      Parse_Serial (Cert_Slice, Index, Cert);
-      Parse_Signature_Algorithm (Cert_Slice, Index, Cert);
-      Parse_Issuer (Cert_Slice, Index, Cert);
-      Parse_Validity_Period (Cert_Slice, Index, Cert);
-      Parse_Subject (Cert_Slice, Index, Cert);
-      Parse_Public_Key_Info (Cert_Slice, Index, Cert);
-      Parse_Extensions (Cert_Slice, Index, Cert);
+
+      --  TBS (To-be-signed) Certificate
+      Parse_TBS_Certificate (Cert_Slice, Index, Cert);
+
+      -- Signature Algorithm and Signature Value
+      Parse_Signature_Algorithm (Cert_Slice, Index, Cert.Signature_Algorithm2, Cert);
 
       if not Cert.Valid then
          Put_Line ("Parse Error.");
@@ -691,7 +723,7 @@ package body X509.Certificates is
       New_Line;
 
       Put_Line ("Signature Algorithm: " & Cert.Signature_Algorithm'Image);
-      Put_Line ("Certificate Algorithm: " & Cert.Public_Key_Algorithm'Image);
+      Put_Line ("Certificate Algorithm: " & Cert.Subject_Public_Key_Algorithm'Image);
    end Parse_Cert_Info;
 
    procedure Parse_Certificate (Cert_Bytes : String; Cert : out Certificate)

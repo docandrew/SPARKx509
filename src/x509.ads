@@ -82,25 +82,29 @@ is
    -- @field Public_Key are the actual bytes of the public key
    -- @field Extensions_Len is the size of the extensions, in bytes
    type Certificate is record
-      Valid                : Boolean;
-      Version              : Integer;
-      Serial_Length        : Serial_Number_Length;
-      Serial               : Serial_Number_Type := (others => 0);
-      Signature_Algorithm  : Algorithm_Identifier;
-      Issuer               : Identification_Type;
-      Subject              : Identification_Type;
-      Valid_From           : Time;
-      Valid_To             : Time;
-      Public_Key_Algorithm : Algorithm_Identifier;
-      Public_Key           : Public_Key_Type;
+      Valid                         : Boolean;
+      Version                       : Integer;
+      Serial_Length                 : Serial_Number_Length;
+      Serial                        : Serial_Number_Type := (others => 0);
+      Signature_Algorithm           : Algorithm_Identifier;
+      Issuer                        : Identification_Type;
+      Valid_From                    : Time;
+      Valid_To                      : Time;
+      Subject                       : Identification_Type;
+      Subject_Public_Key_Algorithm  : Algorithm_Identifier;
+      Subject_Public_Key            : Public_Key_Type;
 
       --  Extensions
       --  Basic Constraints
-      Basic_Constraints    : Boolean := False;
-      Path_Len_Constraint  : Natural := 0;
+      Basic_Constraints             : Boolean := False;
+      Path_Len_Constraint           : Natural := 0;
 
       --  Subject Key Identifier
-      Subject_Key_Id       : Key_Bytes := (others => 0);
-      Subject_Key_Id_Len   : Natural := 0;
+      Subject_Key_Id                : Key_Bytes := (others => 0);
+      Subject_Key_Id_Len            : Natural := 0;
+
+      --  Signature Algorithm specified again for validation
+      Signature_Algorithm2          : Algorithm_Identifier;
+      Signature                     : Public_Key_Type;
    end record;
 end X509;
