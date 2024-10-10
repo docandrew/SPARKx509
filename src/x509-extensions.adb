@@ -12,6 +12,8 @@ is
 
     ---------------------------------------------------------------------------
     --  Parse_Basic_Constraints
+    --  Seq_Size is the sequence length for this extension. If 3, then
+    --  expect Object ID, cA Boolean and pathLenConstraint Integer.
     --  RFC 5280, Section 4.2.1.9
     ---------------------------------------------------------------------------
     procedure Parse_Basic_Constraints (Cert_Slice : String;
@@ -22,18 +24,16 @@ is
     procedure Parse_Basic_Constraints (Cert_Slice : String;
                                        Index      : in out Natural;
                                        Cert       : in out Certificate)
-    is
-        Critical : Boolean;
-        Sequence_Size : Unsigned_32;
-        Sub_Sequence_Size : Unsigned_32;
-        Octet_String_Size : Natural;
-        
+    is  
         CA_Flag : Boolean;  -- cA field is a BOOLEAN that indicates whether or
                             -- not the subject of the certificate is a CA.
+        Seq_Size : Unsigned_32;
     begin
         if not Cert.Valid then
             return;
         end if;
+
+        Log (TRACE, "Parse_Basic_Constraints");
 
         -- Basic Constraints is a SEQUENCE of the following form:
         --     BasicConstraints ::= SEQUENCE {
@@ -47,10 +47,27 @@ is
         -- certificates that may follow this certificate in a valid certification
         -- path. If the pathLenConstraint field is not present, no limit is
         -- imposed.
-        Parse_Sequence_Data (Cert_Slice, Index, Sequence_Size, Cert);
-        Parse_Boolean (Cert_Slice, Index, Critical, Cert);
-        Parse_Octet_String_Header (Cert_Slice, Index, Octet_String_Size, Cert);
-        Parse_Sequence_Data (Cert_Slice, Index, Sub_Sequence_Size, Cert);
+        Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
+
+        -- This data may not be present. Sequence size will tell us what to
+        -- expect.
+        if Seq_Size = 0 then
+            Log (DEBUG, "No Basic Constraints Provided");
+            Cert.Basic_Constraints := False;
+            Cert.Path_Len_Constraint_Present := False;
+            Cert.Path_Len_Constraint := 0;
+        elsif Seq_Size = 3 then
+            -- Boolean value only.
+            Log (DEBUG, "Basic Constraint CA field only");
+            Parse_Boolean (Cert_Slice, Index, Cert.Basic_Constraints, Cert);
+            Cert.Path_Len_Constraint_Present := False;
+            Cert.Path_Len_Constraint := 0;
+        else
+            Log (DEBUG, "Basic Constraint w/ Path Len Constraint");
+            Parse_Boolean (Cert_Slice, Index, Cert.Basic_Constraints, Cert);
+            Parse_Integer (Cert_Slice, Index, Cert.Path_Len_Constraint, Cert);
+            Cert.Path_Len_Constraint_Present := True;
+        end if;
 
     end Parse_Basic_Constraints; 
 
@@ -115,6 +132,8 @@ is
     is
         Seq_Size  : Unsigned_32;
         Object_ID : OID.Object_ID;
+        Critical  : Boolean;
+        Ext_Len   : Natural;
     begin
         -- Each extension is a SEQUENCE of the following form:
         --     Extension ::= SEQUENCE {
@@ -137,6 +156,12 @@ is
         
         Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
         Parse_Object_Identifier (Cert_Slice, Index, Object_ID, Cert);
+        Parse_Boolean (Cert_Slice, Index, Critical, Cert);
+        Parse_Octet_String_Header (Cert_Slice, Index, Ext_Len, Cert);
+
+        Log (DEBUG, " Extension Seq_Size: " & Seq_Size'Image);
+        Log (DEBUG, " Extension Critical? " & Critical'Image);
+        Log (DEBUG, " Extension Length: " & Ext_Len'Image);
 
         if not Cert.Valid then
             return;

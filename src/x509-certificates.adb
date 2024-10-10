@@ -3,6 +3,7 @@ with Ada.Text_IO; use Ada.Text_IO;
 
 with OID;
 with SPARKx509.Debug; use SPARKx509.Debug;
+with x509.Logs; use x509.Logs;
 
 package body X509.Certificates is
 
@@ -643,6 +644,8 @@ package body X509.Certificates is
       --  Expect a header and then a sequence.
       Parse_Extensions_Header (Cert_Slice, Index, Extensions_Size, Cert);
 
+      Log (DEBUG, " Extensions Size: " & Extensions_Size'Image);
+
       if not Cert.Valid then
          return;
       end if;
@@ -652,6 +655,8 @@ package body X509.Certificates is
       if not Cert.Valid then
          return;
       end if;
+
+      Log (DEBUG, " Sequence Size: " & Sequence_Size'Image);
 
       --  Parse each extension until we reach the end of the sequence
       while Unsigned_32(Index) < Extensions_Start + Extensions_Size and Cert.Valid loop

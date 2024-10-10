@@ -49,6 +49,8 @@ package body X509.Basic is
          return;
       end if;
 
+      Log(TRACE, "Parse_Boolean");
+
       if Character'Pos (Cert_Slice (Index)) /= TYPE_BOOLEAN then
          --  Put_Line ("FATAL: Expected a Boolean at " & Index'Image);
          Log (FATAL, "Expected a Boolean at " & Index'Image);
@@ -178,6 +180,8 @@ package body X509.Basic is
          Size := 0;
          return;
       end if;
+
+      Log (TRACE, "Parse_Sequence_Data");
 
       if Character'Pos (Cert_Slice (Index)) /= TYPE_SEQUENCE then
          Put_Line ("FATAL: Expected a Sequence at" &
@@ -354,6 +358,8 @@ package body X509.Basic is
          return;
       end if;
 
+      Log (TRACE, "Parse_Integer");
+
       --  Check the tag
       if Character'Pos (Cert_Slice (Index)) /= TYPE_INTEGER then
          Put_Line ("FATAL: Expected Integer");
@@ -410,6 +416,7 @@ package body X509.Basic is
       else
          Value := Integer (Raw);
       end if;
+
    end Parse_Integer;
 
    ----------------------------------------------------------------------------

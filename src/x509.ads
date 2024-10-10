@@ -95,9 +95,15 @@ is
       Subject_Public_Key            : Public_Key_Type;
 
       --  Extensions
-      --  Basic Constraints
+      --  Basic Constraints. If this is a certificate authority (CA),
+      --   then Basic_Constraints = True.
+      --  Path_Len_Constraint is the maximum number of intermediate
+      --   certificates that may follow this in a certification chain.
+      --  If the Path_Len_Constraint is not present, then 
+      --  Path_Len_Constraint_Present = False and no limit is imposed.
       Basic_Constraints             : Boolean := False;
-      Path_Len_Constraint           : Natural := 0;
+      Path_Len_Constraint_Present   : Boolean := False;
+      Path_Len_Constraint           : Integer := 0;
 
       --  Subject Key Identifier
       Subject_Key_Id                : Key_Bytes := (others => 0);

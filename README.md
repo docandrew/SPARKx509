@@ -32,5 +32,5 @@ To build the tests, run the following commands:
 
 ```shell
 cd tests/
-make
+./build_tests.sh
 ```

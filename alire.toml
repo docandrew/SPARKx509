@@ -6,4 +6,4 @@ authors = ["Jon Andrew"]
 maintainers = ["Jon Andrew <doc@fastmail.com>"]
 maintainers-logins = ["docandrew"]
 [[depends-on]]
-gnatprove = "^12.1.1"
+# gnatprove = "^12.1.1"
