@@ -51,9 +51,8 @@ package body X509.Basic is
 
       Log(TRACE, "Parse_Boolean");
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_BOOLEAN then
-         --  Put_Line ("FATAL: Expected a Boolean at " & Index'Image);
-         Log (FATAL, "Expected a Boolean at " & Index'Image);
+      if Byte_At (Cert_Slice, Index) /= TYPE_BOOLEAN then
+         Log (FATAL, "Expected a Boolean at" & Index'Image & ", got " & Byte_At (Cert_Slice, Index)'Image);
          Cert.Valid := False;
          Value := False;
          return;
@@ -62,8 +61,8 @@ package body X509.Basic is
       Index := Index + 1;
 
       --  Expect length to be 1
-      if Character'Pos (Cert_Slice (Index)) /= 1 then
-         --  Put_Line ("FATAL: Boolean length must be 1");
+      if Byte_At (Cert_Slice, Index) /= 1 then
+         --  Log (FATAL, "Boolean length must be 1");
          Log (FATAL, "Boolean length must be 1");
          Cert.Valid := False;
          Value := False;
@@ -73,10 +72,10 @@ package body X509.Basic is
       Index := Index + 1;
 
       --  Expect 0x00 for False, any other value for True.
-      if Character'Pos (Cert_Slice (Index)) = 0 then
+      if Byte_At (Cert_Slice, Index) = 0 then
          Value := False;
       else
-         if Character'Pos (Cert_Slice (Index)) /= 16#FF# then
+         if Byte_At (Cert_Slice, Index) /= 16#FF# then
             Log (WARN, "Boolean value not 0x00 or 0xFF. Though legal, it is uncommon and may indicate a malicious or erroneous certificate.");
          end if;
 
@@ -99,8 +98,8 @@ package body X509.Basic is
          return;
       end if;
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_NULL then
-         Put_Line ("FATAL: Expected a Null at " & Index'Image);
+      if Byte_At (Cert_Slice, Index) /= TYPE_NULL then
+         Log (FATAL, "Expected a Null at " & Index'Image);
          Cert.Valid := False;
          return;
       end if;
@@ -110,7 +109,7 @@ package body X509.Basic is
       --  Expect the byte following the null to be 0x00, indicating the end of this field.
       --  If it's not, then we've got a malformed certificate.
       if Cert_Slice (Index) /= ASCII.NUl then
-         Put_Line ("FATAL: Expected a Null terminator at " & Index'Image);
+         Log (FATAL, "Expected a Null terminator at " & Index'Image);
          Cert.Valid := False;
          return;
       end if;
@@ -132,16 +131,16 @@ package body X509.Basic is
          return;
       end if;
 
-      if (Unsigned_8 (Character'Pos (Cert_Slice (Index))) and 16#80#) = 0 then
+      if (Unsigned_8 (Byte_At (Cert_Slice, Index)) and 16#80#) = 0 then
          --  If top bit is 0 then it's a short variant.
-         Size := Character'Pos (Cert_Slice (Index)) and 16#7F#;
+         Size := Unsigned_32 (Byte_At (Cert_Slice, Index) and 16#7F#);
          Index := Index + 1;
       else
          --  Otherwise, it's a long variant. The lower 7 bits will contain
          --  the number of octets holding the size. Anything more than 4 and
          --  we balk, since this would be an insanely long certificate and
          --  is almost certainly malicious.
-         Num_Octets := (Character'Pos (Cert_Slice (Index)) and 16#7F#);
+         Num_Octets := (Byte_At (Cert_Slice, Index) and 16#7F#);
 
          if Num_Octets > 4 then
             Cert.Valid := False;
@@ -160,7 +159,7 @@ package body X509.Basic is
             for I in reverse 0 .. Num_Octets - 1 loop
                Size := Size or 
                         Shift_Left (Unsigned_32 (
-                           Character'Pos (Cert_Slice (Index))), 
+                           Byte_At (Cert_Slice, Index)), 
                            Natural (8 * I));
                Index := Index + 1;
             end loop;
@@ -183,11 +182,11 @@ package body X509.Basic is
 
       Log (TRACE, "Parse_Sequence_Data");
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_SEQUENCE then
-         Put_Line ("FATAL: Expected a Sequence at" &
+      if Byte_At (Cert_Slice, Index) /= TYPE_SEQUENCE then
+         Log (FATAL, "Expected a Sequence at" &
                     Index'Image &
                     " found byte" & 
-                    Character'Pos (Cert_Slice (Index))'Image &
+                    Byte_At (Cert_Slice, Index)'Image &
                     " instead.");
          Cert.Valid := False;
          Size := 0;
@@ -200,7 +199,7 @@ package body X509.Basic is
       -- Put_Line (" Sequence Size: " & Size'Image);
 
       if not Check_Bounds (Cert_Slice, Index, Size) then
-         Put_Line ("FATAL: Sequence length greater than certificate size");
+         Log (FATAL, "Sequence length greater than certificate size");
          -- Put_Line ("  Cert_Slice'Last:" & Cert_Slice'Last'Image);
          -- Put_Line ("  Size: " & Size'Image);
          Cert.Valid := False;
@@ -223,11 +222,11 @@ package body X509.Basic is
          return;
       end if;
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_SET then
-         Put_Line ("FATAL: Expected a Set at " &
+      if Byte_At (Cert_Slice, Index) /= TYPE_SET then
+         Log (FATAL, "Expected a Set at " &
                    Index'Image &
                    " found byte" &
-                   Character'Pos (Cert_Slice (Index))'Image &
+                   Byte_At (Cert_Slice, Index)'Image &
                    " instead.");
          Cert.Valid := False;
          Size := 0;
@@ -239,7 +238,7 @@ package body X509.Basic is
       Parse_Size (Cert_Slice, Index, Size, Cert);
 
       if not Check_Bounds (Cert_Slice, Index, Size) then
-         Put_Line ("FATAL: Set length greater than certificate size");
+         Log (FATAL, "Set length greater than certificate size");
          Cert.Valid := False;
          Size := 0;
          return;
@@ -263,8 +262,8 @@ package body X509.Basic is
          return;
       end if;
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_BITSTRING then
-         Put_Line ("FATAL: Expected a Bit String at " & Index'Image);
+      if Byte_At (Cert_Slice, Index) /= TYPE_BITSTRING then
+         Log (FATAL, "Expected a Bit String at " & Index'Image);
          Cert.Valid := False;
          return;
       end if;
@@ -277,12 +276,12 @@ package body X509.Basic is
       Size := Size - 1;
       Put_Line (" Bit String Size:" & Size'Image);
 
-      Unused_Bits := Character'Pos (Cert_Slice (Index));
+      Unused_Bits := Byte_At (Cert_Slice, Index);
       Index := Index + 1;
 
       --  Indicates malicious or corrupted certificate.
       if Unused_Bits > 7 then
-         Put_Line ("FATAL: Excessive unused bits in bit string.");
+         Log (FATAL, "Excessive unused bits in bit string.");
          Cert.Valid := False;
          return;
       end if;
@@ -302,8 +301,8 @@ package body X509.Basic is
 
       use type OID.Object_ID;
    begin
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_OBJECTID then
-         Put_Line ("FATAL: Expected Object Identifier for Signature Algorithm");
+      if Byte_At (Cert_Slice, Index) /= TYPE_OBJECTID then
+         Log (FATAL, "Expected Object Identifier for Signature Algorithm");
          Object_ID := OID.Unknown;
          Cert.Valid := False;
          return;
@@ -314,14 +313,14 @@ package body X509.Basic is
       Index := Index + 1;
 
       --  Number of octets for object ID follows
-      Num_Octets := Character'Pos (Cert_Slice (Index));
+      Num_Octets := Natural (Byte_At (Cert_Slice, Index));
 
       --  Object ID shouldn't be more than a handful of bytes in an X.509 cert. 
       --  If the MSb is set, indicating a length > 127, or if it's longer than
       --  our cert itself, then we balk.
       if Num_Octets > 127 or 
          not Check_Bounds (Cert_Slice, Index, Unsigned_32 (Num_Octets)) then
-         Put_Line ("FATAL: Object ID too large");
+         Log (FATAL, "Object ID too large");
          Object_ID := OID.UNKNOWN;
          Cert.Valid := False;
          return;
@@ -333,6 +332,8 @@ package body X509.Basic is
       --     To_Byte_Seq (Cert_Slice (Index .. Index + Num_Octets - 1)));
 
       Object_ID := OID.Lookup (Cert_Slice (Index .. Index + Num_Octets - 1));
+
+      Log (TRACE, " Found Object ID " & Object_ID'Image);
 
       if Object_ID = OID.Unknown then
          Cert.Valid := False;
@@ -361,8 +362,8 @@ package body X509.Basic is
       Log (TRACE, "Parse_Integer");
 
       --  Check the tag
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_INTEGER then
-         Put_Line ("FATAL: Expected Integer");
+      if Byte_At (Cert_Slice, Index) /= TYPE_INTEGER then
+         Log (FATAL, "Expected Integer");
          Value := 0;
          Cert.Valid := False;
          return;
@@ -373,26 +374,26 @@ package body X509.Basic is
       --  Parse the length field. For our purposes, we'll assume the length
       --  field is a single byte. If it's not, then we'll balk. MSB must be
       --  0, indicating a short form length.
-      if Character'Pos (Cert_Slice (Index)) > 127 then
-         Put_Line ("FATAL: Integer length too large");
+      if Byte_At (Cert_Slice, Index) > 127 then
+         Log (FATAL, "Integer length too large");
          Value := 0;
          Cert.Valid := False;
          return;
       end if;
 
-      Size := Character'Pos (Cert_Slice (Index));
+      Size := Natural (Byte_At (Cert_Slice, Index));
 
       --  Furthermore, this function is intended for parsing small integers
       --  like the version number, so we'll balk if the integer is too large.
       if Size > 4 then
-         Put_Line ("FATAL: Integer too large for this function");
+         Log (FATAL, "Integer too large for this function");
          Value := 0;
          Cert.Valid := False;
          return;
       end if;
 
       if Size = 0 then
-         Put_Line ("FATAL: Zero-length integer specified");
+         Log (FATAL, "Zero-length integer specified");
          Value := 0;
          Cert.Valid := False;
          return;
@@ -403,7 +404,7 @@ package body X509.Basic is
 
       for I in 0 .. Size - 1 loop
          Raw := Raw or 
-                  Shift_Left (Unsigned_32 (Character'Pos (Cert_Slice (Index))), (8 * I));
+                  Shift_Left (Unsigned_32 (Byte_At (Cert_Slice, Index)), (8 * I));
          Index := Index + 1;
       end loop;
 
@@ -437,8 +438,8 @@ package body X509.Basic is
          return;
       end if;
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_INTEGER then
-         Put_Line ("FATAL: Expected Integer");
+      if Byte_At (Cert_Slice, Index) /= TYPE_INTEGER then
+         Log (FATAL, "Expected Integer");
          Bytes := (others => 0);
          Cert.Valid := False;
          return;
@@ -460,14 +461,14 @@ package body X509.Basic is
 
       if Length > Key_Bytes'Length or
          not Check_Bounds (Cert_Slice, Index, Unsigned_32 (Length)) then
-         Put_Line ("FATAL: Integer too large");
+         Log (FATAL, "Integer too large");
          Bytes := (others => 0);
          Cert.Valid := False;
          return;
       end if;
 
       for I in 0 .. Length - 1 loop
-         Bytes (I) := Unsigned_8 (Character'Pos (Cert_Slice (Index)));
+         Bytes (I) := Unsigned_8 (Byte_At (Cert_Slice, Index));
          Index := Index + 1;
       end loop;
    end Parse_Integer;
@@ -475,22 +476,22 @@ package body X509.Basic is
    ----------------------------------------------------------------------------
    --  Parse_Bit_String
    ----------------------------------------------------------------------------
-   procedure Parse_Bit_String (Cert_Slice : String;
-                               Index      : in out Natural;
-                               Length     : out Natural;
-                               Bytes      : out Key_Bytes;
-                               Cert       : in out Certificate)
+   procedure Parse_Bit_String (Cert_Slice  : String;
+                               Index       : in out Natural;
+                               Length      : out Natural;
+                               Unused_Bits : out Unsigned_8;
+                               Bytes       : out Key_Bytes;
+                               Cert        : in out Certificate)
    is
       Size : Unsigned_32;
-      Unused_Bits : Unsigned_8;
    begin
       if not Cert.Valid then
          Length := 0;
          return;
       end if;
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_BITSTRING then
-         Put_Line ("FATAL: Expected a Bit String at " & Index'Image);
+      if Byte_At (Cert_Slice, Index) /= TYPE_BITSTRING then
+         Log (FATAL, "Expected a Bit String at " & Index'Image);
          Cert.Valid := False;
          return;
       end if;
@@ -502,17 +503,17 @@ package body X509.Basic is
       Parse_Size (Cert_Slice, Index, Size, Cert);
       
       if Size = 0 then
-         Put_Line ("FATAL: Bit String length cannot be zero");
+         Log (FATAL, "Bit String length cannot be zero");
          Cert.Valid := False;
          return;
       end if;
 
-      Unused_Bits := Character'Pos (Cert_Slice (Index));
+      Unused_Bits := Byte_At (Cert_Slice, Index);
       Index := Index + 1;
 
       --  Indicates malicious or corrupted certificate.
       if Unused_Bits > 7 then
-         Put_Line ("FATAL: Excessive unused bits in bit string.");
+         Log (FATAL, "Excessive unused bits in bit string.");
          Cert.Valid := False;
          Length := 0;
          return;
@@ -521,12 +522,12 @@ package body X509.Basic is
       -- Adjust length to account for unused bits byte
       Length := Natural (Size) - 1;
    
-      Put_Line (" Bit String Size (bytes):" & Length'Image);
-      Put_Line (" Unused Bits: " & Unused_Bits'Image);
+      Log (TRACE, "Bit String Size (bytes):" & Length'Image);
+      Log (TRACE, "Unused Bits: " & Unused_Bits'Image);
 
       --  Read in the bytes
       for I in 0 .. Length - 1 loop
-         Bytes (I) := Unsigned_8 (Character'Pos (Cert_Slice (Index)));
+         Bytes (I) := Unsigned_8 (Byte_At (Cert_Slice, Index));
          Index := Index + 1;
       end loop;
    end Parse_Bit_String;
@@ -547,14 +548,14 @@ package body X509.Basic is
       end if;
 
       --  Difference is YY vs YYYY. 
-      case Character'Pos (Cert_Slice (Index)) is
+      case Byte_At (Cert_Slice, Index) is
          when TYPE_UTCTIME =>
             --  Skip tag
             Index := Index + 1;
 
             --  Expect 13 bytes YYMMDDhhmmssZ
-            if Character'Pos (Cert_Slice (Index)) /= 13 then
-               Put_Line ("FATAL: UTCTime must be 13 bytes");
+            if Byte_At (Cert_Slice, Index) /= 13 then
+               Log (FATAL, "UTCTime must be 13 bytes");
                Cert.Valid := False;
                return;
             end if;
@@ -563,7 +564,7 @@ package body X509.Basic is
             Index := Index + 1;
 
             if not Check_Bounds (Cert_Slice, Index, 13) then
-               Put_Line ("FATAL: Time stamp too large");
+               Log (FATAL, "Time stamp too large");
                Cert.Valid := False;
                return;
             end if;
@@ -583,8 +584,8 @@ package body X509.Basic is
             Index := Index + 1;
 
             --  Expect 15 bytes YYYYMMDDhhmmssZ
-            if Character'Pos (Cert_Slice (Index)) /= 15 then
-               Put_Line ("FATAL: Generalized_Time must be 15 bytes");
+            if Byte_At (Cert_Slice, Index) /= 15 then
+               Log (FATAL, "Generalized_Time must be 15 bytes");
                Cert.Valid := False;
                return;
             end if;
@@ -593,7 +594,7 @@ package body X509.Basic is
             Index := Index + 1;
 
             if not Check_Bounds (Cert_Slice, Index, 13) then
-               Put_Line ("FATAL: Time stamp too large");
+               Log (FATAL, "Time stamp too large");
                Cert.Valid := False;
                return;
             end if;
@@ -601,7 +602,7 @@ package body X509.Basic is
             Year   := Natural'Value (Cert_Slice (Index .. Index + 3));
             Index  := Index + 4;
          when others =>
-            Put_Line ("FATAL: Expected valid time type");
+            Log (FATAL, "Expected valid time type");
             Cert.Valid := False;
             return;
       end case;
@@ -618,7 +619,7 @@ package body X509.Basic is
       Index  := Index + 2;
 
       if Cert_Slice (Index) /= 'Z' then
-         Put_Line ("FATAL: Certificate validity must be a GMT time");
+         Log (FATAL, "Certificate validity must be a GMT time");
          Cert.Valid := False;
          return;
       end if;
@@ -631,7 +632,7 @@ package body X509.Basic is
          Hour   not in 0 .. 23 or
          Minute not in 0 .. 59 or
          Second not in 0 .. 59 then
-            Put_Line ("FATAL: Bad time stamp in certificate");
+            Log (FATAL, "Bad time stamp in certificate");
             Cert.Valid := False;
             return;
       end if;
@@ -640,7 +641,7 @@ package body X509.Basic is
 
    exception
       when E : Constraint_Error =>
-         Put_Line ("FATAL: Invalid character in time stamp");
+         Log (FATAL, "Invalid character in time stamp");
          Cert.Valid := False;
          return;
    end Parse_Time;
@@ -660,7 +661,7 @@ package body X509.Basic is
          return;
       end if;
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_OCTETSTRING then
+      if Byte_At (Cert_Slice, Index) /= TYPE_OCTETSTRING then
          Log (FATAL, "Expected an Octet String at " & Index'Image);
          Cert.Valid := False;
          Length := 0;
@@ -704,9 +705,18 @@ package body X509.Basic is
       end if;
 
       for I in 0 .. Length - 1 loop
-         Bytes (I) := Unsigned_8 (Character'Pos (Cert_Slice (Index)));
+         Bytes (I) := Unsigned_8 (Byte_At (Cert_Slice, Index));
          Index := Index + 1;
       end loop;
    end Parse_Octet_String;
+
+   ----------------------------------------------------------------------------
+   --  Byte_At
+   ----------------------------------------------------------------------------
+   function Byte_At (Cert_Slice : String; Index : in Natural) return Unsigned_8
+   is
+   begin
+      return Character'Pos (Cert_Slice(Index));
+   end Byte_At;
 
 end X509.Basic;

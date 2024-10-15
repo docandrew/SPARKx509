@@ -27,6 +27,9 @@ is
    package UB_Country_Numeric is new Generic_Bounded_Length (Max => 3);
    package UB_Postal_Code     is new Generic_Bounded_Length (Max => 16);
 
+   -- UTF8 String
+   package UB_UTF8String      is new Generic_Bounded_Length (Max => 200);
+
    subtype Algorithm_Identifier is OID.Object_ID range UNKNOWN_ALGORITHM .. ID_EDDSA448_PH;
 
    --  Maximum length of serial number is 20 per RFC 5280
@@ -48,6 +51,8 @@ is
       Pseudonym           : UB_Pseudonym.Bounded_String;
       Generation          : UB_Generation.Bounded_String;
    end record;
+
+   type UTF8_String is new UB_UTF8String.Bounded_String;
 
    type Key_Bytes is array (Natural range 0 .. 65535) of Unsigned_8;
 
@@ -94,7 +99,10 @@ is
       Subject_Public_Key_Algorithm  : Algorithm_Identifier;
       Subject_Public_Key            : Public_Key_Type;
 
+      -------------------------------------------------------------------------
       --  Extensions
+      -------------------------------------------------------------------------
+
       --  Basic Constraints. If this is a certificate authority (CA),
       --   then Basic_Constraints = True.
       --  Path_Len_Constraint is the maximum number of intermediate
@@ -105,9 +113,20 @@ is
       Path_Len_Constraint_Present   : Boolean := False;
       Path_Len_Constraint           : Integer := 0;
 
-      --  Subject Key Identifier
+      --  Subject Key Identifier Extension
       Subject_Key_Id                : Key_Bytes := (others => 0);
       Subject_Key_Id_Len            : Natural := 0;
+
+      -- Key Usage Extension
+      Digital_Signature             : Boolean := False;
+      Non_Repudiation               : Boolean := False; -- recent editions of X.509 have renamed this bit to contentCommitment
+      Key_Encipherment              : Boolean := False;
+      Data_Encipherment             : Boolean := False;
+      Key_Agreement                 : Boolean := False;
+      Key_Cert_Sign                 : Boolean := False;
+      CRL_Sign                      : Boolean := False;            
+      Encipher_Only                 : Boolean := False;
+      Decipher_Only                 : Boolean := False;
 
       --  Signature Algorithm specified again for validation
       Signature_Algorithm2          : Algorithm_Identifier;

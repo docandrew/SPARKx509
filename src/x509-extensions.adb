@@ -124,15 +124,137 @@ is
     end Parse_Subject_Key_Identifier;
 
     ---------------------------------------------------------------------------
+    -- Parse_Key_Usage
+    ---------------------------------------------------------------------------
+    procedure Parse_Key_Usage (Cert_Slice : String;
+                               Index      : in out Natural;
+                               Cert       : in out Certificate)
+    is
+        Bit_String_Size        : Natural;
+        Bit_String_Unused_Bits : Unsigned_8;
+        Num_Bitflags           : Natural;
+        Key_Usage_Bytes        : Key_Bytes;
+    begin
+
+        Log (TRACE, "Parse_Key_Usage");
+
+        if not Cert.Valid then
+            return;
+        end if;
+
+        Parse_Bit_String (Cert_Slice, Index, Bit_String_Size, Bit_String_Unused_Bits, Key_Usage_Bytes, Cert);
+
+        if not Cert.Valid then
+            Log (FATAL, "Unable to parse Key Usage, expected Bit String");
+            return;
+        end if;
+
+        Num_Bitflags := Bit_String_Size * 8 - Natural(Bit_String_Unused_Bits);
+
+        -- Per RFC 5280, Key Usage extension has up to 9 bitflags.
+        -- encipherOnly and decipherOnly; may be missing.
+        if Num_Bitflags /= 7 and Num_Bitflags /= 9 then
+            Log (FATAL, "Expected RFC 5280 bitflags for Key Usage extension, got" & Num_Bitflags'Image);
+            Cert.Valid := False;
+            return;
+        end if;
+
+        Cert.Digital_Signature := (if (Key_Usage_Bytes(0) and 2#1000_0000#) /= 0 then True else False);
+        Cert.Non_Repudiation   := (if (Key_Usage_Bytes(0) and 2#0100_0000#) /= 0 then True else False);
+        Cert.Key_Encipherment  := (if (Key_Usage_Bytes(0) and 2#0010_0000#) /= 0 then True else False);
+        Cert.Data_Encipherment := (if (Key_Usage_Bytes(0) and 2#0001_0000#) /= 0 then True else False);
+        Cert.Key_Agreement     := (if (Key_Usage_Bytes(0) and 2#0000_1000#) /= 0 then True else False);
+        Cert.Key_Cert_Sign     := (if (Key_Usage_Bytes(0) and 2#0000_0100#) /= 0 then True else False);
+        Cert.CRL_Sign          := (if (Key_Usage_Bytes(0) and 2#0000_0010#) /= 0 then True else False);
+
+        if Num_Bitflags = 9 then
+            Cert.Encipher_Only := (if (Key_Usage_Bytes(0) and 2#0000_0001#) /= 0 then True else False);
+            Cert.Decipher_Only := (if (Key_Usage_Bytes(1) and 2#1000_0000#) /= 0 then True else False);
+        end if;
+
+        Log (DEBUG, " Key Usage:");
+        Log (DEBUG, "  Digital Signature: " & Cert.Digital_Signature'Image);
+        Log (DEBUG, "  Non-Repudiation:   " & Cert.Non_Repudiation'Image);
+        Log (DEBUG, "  Key Encipherment:  " & Cert.Key_Encipherment'Image);
+        Log (DEBUG, "  Data Encipherment: " & Cert.Data_Encipherment'Image);
+        Log (DEBUG, "  Key Agreement:     " & Cert.Key_Agreement'Image);
+        Log (DEBUG, "  Key Cert Sign:     " & Cert.Key_Cert_Sign'Image);
+        Log (DEBUG, "  CRL Sign:          " & Cert.CRL_Sign'Image);
+        Log (DEBUG, "  Encipher Only:     " & Cert.Encipher_Only'Image);
+        Log (DEBUG, "  Decipher Only:     " & Cert.Decipher_Only'Image);
+    end Parse_Key_Usage;
+
+    ---------------------------------------------------------------------------
+    --  Parse_Authority_Info_Access
+    ---------------------------------------------------------------------------
+    procedure Parse_Authority_Info_Access (Cert_Slice : String;
+                                           Index      : in out Natural;
+                                           Cert       : in out Certificate)
+    is
+      Authority_Info_Size   : Unsigned_32;
+      Authority_Info_Start  : Unsigned_32 := Unsigned_32(Index);
+
+      Access_Desc_Size      : Unsigned_32;
+      Access_Method         : Object_ID;
+      Access_Location       : UTF8_String;  -- @TODO this can be other string types
+      Sequence_Size         : Unsigned_32;
+   begin
+      --  Authority Info is a sequence of Obj_ID / Name pairs (sequences)
+      --
+      --  AuthorityInfoAccessSyntax  ::=
+      --  SEQUENCE SIZE (1..MAX) OF AccessDescription
+      --
+      --  AccessDescription  ::=  SEQUENCE {
+      --          accessMethod          OBJECT IDENTIFIER,
+      --          accessLocation        GeneralName  }
+      --
+      --  id-ad OBJECT IDENTIFIER ::= { id-pkix 48 }
+      --
+      --  id-ad-caIssuers OBJECT IDENTIFIER ::= { id-ad 2 }
+      --
+      --  id-ad-ocsp OBJECT IDENTIFIER ::= { id-ad 1 }
+      Log (TRACE, "Parse_Authority_Info_Access");
+
+      if not Cert.Valid then
+         return;
+      end if;
+
+      --  Expect a sequence to start.
+      Parse_Sequence_Data (Cert_Slice, Index, Authority_Info_Size, Cert);
+      Log (DEBUG, " Authority Info Access Size: " & Authority_Info_Size'Image);
+
+      if not Cert.Valid then
+         return;
+      end if;
+
+
+      --  Parse each extension until we reach the end of the sequence
+      while Unsigned_32(Index) < Authority_Info_Start + Authority_Info_Size and Cert.Valid loop
+        Parse_Sequence_Data (Cert_Slice, Index, Access_Desc_Size, Cert);
+
+        if not Cert.Valid then
+          return;
+        end if;
+
+        Log (DEBUG, " Authority Info Access Description Size: " & Access_Desc_Size'Image);
+
+        --  Expect Object ID and then the name
+        Parse_Object_Identifier (Cert_Slice, Index, Access_Method, Cert);
+
+
+      end loop;
+    end Parse_Authority_Info_Access;                                           
+
+    ---------------------------------------------------------------------------
     --  Parse_Extension
     ---------------------------------------------------------------------------
     procedure Parse_Extension (Cert_Slice : String;
-                              Index      : in out Natural;
-                              Cert       : in out Certificate)
+                               Index      : in out Natural;
+                               Cert       : in out Certificate)
     is
         Seq_Size  : Unsigned_32;
         Object_ID : OID.Object_ID;
-        Critical  : Boolean;
+        Critical  : Boolean := False;  --  note default value of false, if missing.
         Ext_Len   : Natural;
     begin
         -- Each extension is a SEQUENCE of the following form:
@@ -156,7 +278,12 @@ is
         
         Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
         Parse_Object_Identifier (Cert_Slice, Index, Object_ID, Cert);
-        Parse_Boolean (Cert_Slice, Index, Critical, Cert);
+
+        -- Critical field?
+        if Byte_At (Cert_Slice, Index) = TYPE_BOOLEAN then
+            Parse_Boolean (Cert_Slice, Index, Critical, Cert);
+        end if;
+
         Parse_Octet_String_Header (Cert_Slice, Index, Ext_Len, Cert);
 
         Log (DEBUG, " Extension Seq_Size: " & Seq_Size'Image);
@@ -172,15 +299,21 @@ is
                 Parse_Basic_Constraints (Cert_Slice, Index, Cert);
             when SUBJECT_KEY_IDENTIFIER =>
                 Parse_Subject_Key_Identifier (Cert_Slice, Index, Cert);
-                -- Parse_Authority_Key_Identifier (Cert_Slice, Index, Cert);
-            --  when KEY_USAGE =>
-            --      Parse_Key_Usage (Cert_Slice, Index, Cert);
-            --  when SUBJECT_ALT_NAME =>
-            --      Parse_Subject_Alt_Name (Cert_Slice, Index, Cert);
+            when KEY_USAGE =>
+                Parse_Key_Usage (Cert_Slice, Index, Cert);
+            when PKIX_AUTHORITY_INFO_ACCESS =>
+                Parse_Authority_Info_Access (Cert_Slice, Index, Cert);
             when others =>
-                Put_Line ("FATAL: Unsupported Extension");
-                Cert.Valid := False;
-                return;
+                --  Per RFC 5280, "If an extension containing unexpected values is marked as critical,
+                --  the implementation MUST reject the certificate or CRL containing the
+                --  unrecognized extension."
+                if Critical then
+                  Log (FATAL, "Unsupported Critical Extension " & Object_ID'Image);
+                  Cert.Valid := False;
+                  return;
+                else
+                  Log (WARN, "Unsupported Extension " & Object_ID'Image);
+                end if;
         end case;
 
         -- Parse_Boolean (Cert_Slice, Index);

@@ -245,7 +245,8 @@ is
       (16#55#, 16#1D#, 16#45#));
 
    -- PKIX Extensions
-   
+   PKIX_AUTHORITY_INFO_ACCESS_STR : constant String := To_String (
+      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#01#, 16#01#));
 
    --  Instead of gonkulating the actual object ID string, we just compare
    --  packed byte representations.
@@ -353,6 +354,7 @@ is
       elsif Packed = ALLOWED_ATT_ASS_STR   then return ALLOWED_ATT_ASS;
       elsif Packed = ATTRIBUTE_MAPPINGS_STR then return ATTRIBUTE_MAPPINGS;
       elsif Packed = HOLDER_NAME_CONSTRAINTS_STR then return HOLDER_NAME_CONSTRAINTS;
+      elsif Packed = PKIX_AUTHORITY_INFO_ACCESS_STR then return PKIX_AUTHORITY_INFO_ACCESS;
       else return UNKNOWN; end if;
    end Lookup;
 end OID;

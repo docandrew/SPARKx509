@@ -126,11 +126,12 @@ is
    ----------------------------------------------------------------------------
    --  Parse_Bit_String
    ----------------------------------------------------------------------------
-   procedure Parse_Bit_String (Cert_Slice : String;
-                               Index      : in out Natural;
-                               Length     : out Natural;
-                               Bytes      : out Key_Bytes;
-                               Cert       : in out Certificate)
+   procedure Parse_Bit_String (Cert_Slice  : String;
+                               Index       : in out Natural;
+                               Length      : out Natural;
+                               Unused_Bits : out Unsigned_8;
+                               Bytes       : out Key_Bytes;
+                               Cert        : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
 
    ----------------------------------------------------------------------------
@@ -161,5 +162,13 @@ is
                                  Bytes      : out Key_Bytes;
                                  Cert       : in out Certificate)
       with Pre => Index in Cert_Slice'Range;
+
+   ----------------------------------------------------------------------------
+   --  Byte_At
+   --  Given the string and position, what ASN.1 type is indicated by the tag
+   --  at this position?
+   ----------------------------------------------------------------------------
+   function Byte_At (Cert_Slice : String; Index : in Natural) return Unsigned_8
+     with Pre => Index in Cert_Slice'Range;
 
 end X509.Basic;

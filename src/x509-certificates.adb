@@ -33,7 +33,7 @@ package body X509.Certificates is
       end if;
 
       if not Is_String (Cert_Slice (Index)) then
-         Put_Line ("FATAL: Expected a string type");
+         Log (FATAL, "Expected a string type");
          Cert.Valid := False;
          S := P.To_Bounded_String ("");
          return;
@@ -110,40 +110,40 @@ package body X509.Certificates is
          return;
       end if;
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_VERSION then
+      if Byte_At (Cert_Slice, Index) /= TYPE_VERSION then
          --  no version supplied, assume v1, Index remains unchanged
          Put_Line ("No X.509 version supplied, assuming default v1");
          Cert.Version := 1;
       else
          Index := Index + 1;
          --  How long? Should be 3 bytes representing a universal type integer
-         if Character'Pos (Cert_Slice (Index)) /= 3 then
-            Put_Line ("FATAL: Expected X.509 version to be 3 bytes (it wasn't).");
+         if Byte_At (Cert_Slice, Index) /= 3 then
+            Log (FATAL, "Expected X.509 version to be 3 bytes (it wasn't).");
             Cert.Valid := False;
             return;
          end if;
 
          --  Version should be a universal type integer
          Index := Index + 1;
-         if Character'Pos (Cert_Slice (Index)) /= TYPE_INTEGER then
-            Put_Line ("FATAL: Expected X.509 version to be an integer");
+         if Byte_At (Cert_Slice, Index) /= TYPE_INTEGER then
+            Log (FATAL, "Expected X.509 version to be an integer");
             Cert.Valid := False;
             return;
          end if;
 
          --  Integer should be 1 byte long
          Index := Index + 1;
-         if Character'Pos (Cert_Slice (Index)) /= 1 then
-            Put_Line ("FATAL: Expected X.509 version integer to be 1 byte");
+         if Byte_At (Cert_Slice, Index) /= 1 then
+            Log (FATAL, "Expected X.509 version integer to be 1 byte");
             Cert.Valid := False;
             return;
          end if;
 
          Index := Index + 1;
-         Version := Character'Pos (Cert_Slice (Index));
+         Version := Natural (Byte_At (Cert_Slice, Index));
 
          if not (Version in 1 | 2 | 3) then
-            Put_Line ("FATAL: Expected X.509 version 1, 2 or 3, got" &
+            Log (FATAL, "Expected X.509 version 1, 2 or 3, got" &
                       Version'Image);
             Cert.Valid := False;
             return;
@@ -170,8 +170,8 @@ package body X509.Certificates is
       end if;
 
       --  Serial number should be a universal integer
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_INTEGER then
-         Put_Line ("FATAL: Expected X.509 serial number (ASN.1 Integer)");
+      if Byte_At (Cert_Slice, Index) /= TYPE_INTEGER then
+         Log (FATAL, "Expected X.509 serial number (ASN.1 Integer)");
          Cert.Valid := False;
          return;
       end if;
@@ -181,19 +181,19 @@ package body X509.Certificates is
 
       --  RFC 5280 mandates serials no larger than 20 bytes.
       if Serial_Size > 20 then
-         Put_Line ("FATAL: X.509 Serial Number too large");
+         Log (FATAL, "X.509 Serial Number too large");
          Cert.Valid := False;
          return;
       end if;
 
       if Serial_Size = 0 then
-         Put_Line ("FATAL: X.509 Serial Number length cannot be zero");
+         Log (FATAL, "X.509 Serial Number length cannot be zero");
          Cert.Valid := False;
          return;
       end if;
 
       if Index + Natural (Serial_Size) > Cert_Slice'Last then
-         Put_Line ("FATAL: X.509 serial length exceeds certificate size");
+         Log (FATAL, "X.509 serial length exceeds certificate size");
          Cert.Valid := False;
          return;
       end if;
@@ -202,7 +202,7 @@ package body X509.Certificates is
 
       --  Read in the serial bytes.
       for I in 1 .. Cert.Serial_Length loop
-         Cert.Serial (I) := Unsigned_8 (Character'Pos (Cert_Slice (Index)));
+         Cert.Serial (I) := Unsigned_8 (Byte_At (Cert_Slice, Index));
          Index := Index + 1;
       end loop;
    end Parse_Serial;
@@ -236,7 +236,7 @@ package body X509.Certificates is
       end if;
 
       if Object_ID not in RSA_ENCRYPTION .. ID_EDDSA448_PH then
-         Put_Line ("FATAL: Unknown Signature Algorithm");
+         Log (FATAL, "Unknown Signature Algorithm");
          Algorithm := UNKNOWN_ALGORITHM;
          Cert.Valid := False;
          return;
@@ -254,7 +254,7 @@ package body X509.Certificates is
             -- Expect no parameters
             null;
          when others =>
-            Put_Line ("FATAL: Unsupported Algorithm " & Algorithm'Image);
+            Log (FATAL, "Unsupported Algorithm " & Algorithm'Image);
       end case;
    end Parse_Algorithm;
 
@@ -375,7 +375,7 @@ package body X509.Certificates is
                Parse_Pseudonym (Cert_Slice, Index, ID.Pseudonym, Cert);
                Put_Line (UB_Pseudonym.To_String (ID.Pseudonym));
             when others =>
-               Put_Line ("FATAL: Inappropriate Identification Field");
+               Log (FATAL, "Inappropriate Identification Field");
                Cert.Valid := False;
                return;
          end case;
@@ -457,14 +457,14 @@ package body X509.Certificates is
       Parse_Bit_String_Header (Cert_Slice, Index, Bit_String_Size, Cert);
 
       if not Cert.Valid or Bit_String_Size = 0 then
-         Put_Line ("FATAL: Invalid RSA public key bit string");
+         Log (FATAL, "Invalid RSA public key bit string");
          return;
       end if;
 
       Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
 
       if not Cert.Valid OR Seq_Size = 0 then
-         Put_Line ("FATAL: Invalid RSA public key sequence");
+         Log (FATAL, "Invalid RSA public key sequence");
          return;
       end if;
 
@@ -478,7 +478,7 @@ package body X509.Certificates is
       Parse_Integer (Cert_Slice, Index, Exponent, Cert);
 
       if Exponent < 0 then
-         Put_Line ("FATAL: RSA public key exponent cannot be negative");
+         Log (FATAL, "RSA public key exponent cannot be negative");
          Cert.Valid := False;
          return;
       end if;
@@ -506,16 +506,18 @@ package body X509.Certificates is
    is
       Length : Integer;
       Key    : Key_Bytes;
+
+      Ignored_Unused_Bits : Unsigned_8;
    begin
 
       if not Cert.Valid then
          return;
       end if;
 
-      Parse_Bit_String (Cert_Slice, Index, Length, Key, Cert);
+      Parse_Bit_String (Cert_Slice, Index, Length, Ignored_Unused_Bits, Key, Cert);
 
       if not Cert.Valid or Length /= ED25519_PUBLIC_KEY_SIZE then
-         Put_Line ("FATAL: Invalid ED25519 public key bit string");
+         Log (FATAL, "Invalid ED25519 public key bit string");
          return;
       end if;
 
@@ -546,7 +548,7 @@ package body X509.Certificates is
             Cert.Subject_Public_Key := (Key_Type => ID_EDDSA25519, others => <>);
             Parse_ED25519_Key (Cert_Slice, Index, Cert, Cert.Subject_Public_Key);
          when others =>
-            Put_Line ("FATAL: Unsupported public key algorithm.");
+            Log (FATAL, "Unsupported public key algorithm.");
             Cert.Valid := False;
             return;
       end case;
@@ -602,11 +604,11 @@ package body X509.Certificates is
          return;
       end if;
 
-      if Character'Pos (Cert_Slice (Index)) /= TYPE_EXTENSIONS then
-         Put_Line ("FATAL: Expected X.509 Extensions at" &
+      if Byte_At (Cert_Slice, Index) /= TYPE_EXTENSIONS then
+         Log (FATAL, "Expected X.509 Extensions at" &
                    Index'Image &
                    " found byte" &
-                   Character'Pos (Cert_Slice (Index))'Image &
+                   Byte_At (Cert_Slice, Index)'Image &
                    " instead.");
          Cert.Valid := False;
          Size := 0;
@@ -619,7 +621,7 @@ package body X509.Certificates is
       Put_Line (" Extensions Size: " & Size'Image);
 
       if not Check_Bounds (Cert_Slice, Index, Size) then
-         Put_Line ("FATAL: Extensions length greater than certificate size");
+         Log (FATAL, "Extensions length greater than certificate size");
          Cert.Valid := False;
          Size := 0;
          return;
@@ -687,7 +689,7 @@ package body X509.Certificates is
       Parse_Subject_Public_Key_Info (Cert_Slice, Index, Cert);
       -- Issuer and subject unique ID are deprecated.
       -- Extensions are optional
-      if Character'Pos (Cert_Slice (Index)) = TYPE_EXTENSIONS then
+      if Byte_At (Cert_Slice, Index) = TYPE_EXTENSIONS then
          Parse_Extensions (Cert_Slice, Index, Cert);
       end if;
    end Parse_TBS_Certificate;
@@ -746,7 +748,7 @@ package body X509.Certificates is
 
       --  Sanity check that size of sequence = size of rest of message
       if Size /= Unsigned_32 (Msg_Size) then
-         Put_Line ("FATAL: X.509 Sequence Size doesn't match message size");
+         Log (FATAL, "X.509 Sequence Size doesn't match message size");
          Put_Line (" Expected:" & Size'Image & " Actual:" & Msg_Size'Image);
          Cert.Valid := False;
          return;
