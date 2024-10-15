@@ -9,6 +9,7 @@ with X509.Logs; use X509.Logs;
 package body X509.Extensions with
     SPARK_Mode
 is
+    procedure Parse_UTF8_String is new Generic_Parse_String (UB_UTF8String);
 
     ---------------------------------------------------------------------------
     --  Parse_Basic_Constraints
@@ -227,12 +228,12 @@ is
          return;
       end if;
 
-
-      --  Parse each extension until we reach the end of the sequence
+      --  Parse each access description until we reach the end of the sequence
       while Unsigned_32(Index) < Authority_Info_Start + Authority_Info_Size and Cert.Valid loop
         Parse_Sequence_Data (Cert_Slice, Index, Access_Desc_Size, Cert);
 
         if not Cert.Valid then
+          Log (FATAL, " Invalid Authority Info Access.");
           return;
         end if;
 
@@ -241,7 +242,36 @@ is
         --  Expect Object ID and then the name
         Parse_Object_Identifier (Cert_Slice, Index, Access_Method, Cert);
 
+        if not Cert.Valid then
+          Log (FATAL, " Invalid Authority Info Access Description Object ID");
+          return;
+        end if;
 
+        --  Get name
+        --  @TODO: what if more than one OCSP or CA Issuer is indicated?
+        case Access_Method is
+            when PKIX_OCSP =>
+                Parse_UTF8_String (Cert_Slice, Index, Cert.OCSP, Cert);
+
+                if Cert.Valid then
+                    Log (DEBUG, " Authority OCSP Access: " & UB_UTF8String.To_String(Cert.OCSP));
+                end if;
+            when PKIX_CA_ISSUERS =>
+                Parse_UTF8_String (Cert_Slice, Index, Cert.CA_Issuers, Cert);
+
+                if Cert.Valid then
+                    Log (DEBUG, " Authority CA Issuer: " & UB_UTF8String.To_String(Cert.CA_Issuers));
+                end if;
+            when Others =>
+                Log (FATAL, " Unsupported Authority Info Access Method");
+                Cert.Valid := False;
+                return;
+        end case;
+
+        if not Cert.Valid then
+            Log (FATAL, " Error parsing Authority Info Access Extension");
+            return;
+        end if;
       end loop;
     end Parse_Authority_Info_Access;                                           
 
@@ -316,6 +346,5 @@ is
                 end if;
         end case;
 
-        -- Parse_Boolean (Cert_Slice, Index);
     end Parse_Extension;
 end X509.Extensions;

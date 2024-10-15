@@ -247,12 +247,16 @@ is
    -- PKIX Extensions
    PKIX_AUTHORITY_INFO_ACCESS_STR : constant String := To_String (
       (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#01#, 16#01#));
+   PKIX_OCSP_STR : constant String := To_String (
+      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#30#, 16#01#));
+   PKIX_CA_ISSUERS_STR : constant String := To_String (
+      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#30#, 16#01#));
 
    --  Instead of gonkulating the actual object ID string, we just compare
    --  packed byte representations.
    function Lookup (Packed : String) return Object_ID is
    begin
-      --  Linear search for now
+      --  Linear search for now.
       if Packed = DOMAIN_COMPONENT_STR     then return DOMAIN_COMPONENT;
       elsif Packed = A_RECORD_STR          then return A_RECORD;
       elsif Packed = MX_RECORD_STR         then return MX_RECORD;
@@ -355,6 +359,8 @@ is
       elsif Packed = ATTRIBUTE_MAPPINGS_STR then return ATTRIBUTE_MAPPINGS;
       elsif Packed = HOLDER_NAME_CONSTRAINTS_STR then return HOLDER_NAME_CONSTRAINTS;
       elsif Packed = PKIX_AUTHORITY_INFO_ACCESS_STR then return PKIX_AUTHORITY_INFO_ACCESS;
+      elsif Packed = PKIX_OCSP_STR then return PKIX_OCSP;
+      elsif Packed = PKIX_CA_ISSUERS_STR then return PKIX_CA_ISSUERS;
       else return UNKNOWN; end if;
    end Lookup;
 end OID;

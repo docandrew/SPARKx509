@@ -164,6 +164,16 @@ is
       with Pre => Index in Cert_Slice'Range;
 
    ----------------------------------------------------------------------------
+   --  Generic_Parse_String
+   ----------------------------------------------------------------------------
+   generic
+      with Package P is new Generic_Bounded_Length (<>);
+   procedure Generic_Parse_String (Cert_Slice : String;
+                                   Index      : in out Natural;
+                                   S          : in out P.Bounded_String;
+                                   Cert       : in out Certificate);
+
+   ----------------------------------------------------------------------------
    --  Byte_At
    --  Given the string and position, what ASN.1 type is indicated by the tag
    --  at this position?

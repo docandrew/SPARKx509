@@ -128,6 +128,10 @@ is
       Encipher_Only                 : Boolean := False;
       Decipher_Only                 : Boolean := False;
 
+      -- Authority Info Access Extension
+      OCSP                          : UB_UTF8String.Bounded_String;
+      CA_Issuers                    : UB_UTF8String.Bounded_String;
+
       --  Signature Algorithm specified again for validation
       Signature_Algorithm2          : Algorithm_Identifier;
       Signature                     : Public_Key_Type;
