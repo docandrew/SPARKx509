@@ -250,7 +250,7 @@ is
    PKIX_OCSP_STR : constant String := To_String (
       (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#30#, 16#01#));
    PKIX_CA_ISSUERS_STR : constant String := To_String (
-      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#30#, 16#01#));
+      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#30#, 16#02#));
 
    --  Instead of gonkulating the actual object ID string, we just compare
    --  packed byte representations.

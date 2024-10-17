@@ -225,7 +225,6 @@ is
       -- 1 ISO -> 3 org -> 6 DoD -> 1 Internet -> 5 Security -> 5 Mechanisms -> 7 PKIX -> 48 Access Descriptors
       PKIX_OCSP,                       --  1.3.6.1.5.5.7.48.1
       PKIX_CA_ISSUERS,                 --  1.3.6.1.5.5.7.48.2
-      
 
       --  Distinguished Name Components
       

@@ -85,7 +85,7 @@ is
                                             Index      : in out Natural;
                                             Cert       : in out Certificate)
     is       
-        Outer_Length : Natural;
+        --  Outer_Length : Natural;
     begin
 
         if not Cert.Valid then
@@ -98,11 +98,11 @@ is
         --     SubjectKeyIdentifier ::= KeyIdentifier
         --     KeyIdentifier ::= OCTET STRING
 
-        Parse_Octet_String_Header (Cert_Slice, Index, Outer_Length, Cert);
+        --  Parse_Octet_String_Header (Cert_Slice, Index, Outer_Length, Cert);
         
-        if not Cert.Valid then
-            return;
-        end if;
+        --  if not Cert.Valid then
+        --      return;
+        --  end if;
         
         Parse_Octet_String (Cert_Slice, Index, Cert.Subject_Key_Id_Len, Cert.Subject_Key_Id, Cert);
 
@@ -110,12 +110,12 @@ is
             return;
         end if;
 
-        if Cert.Subject_Key_Id_Len + 2 /= Outer_Length then
-            Log (FATAL, "Subject Key Identifier Length Mismatch");
-            Cert.Subject_Key_Id_Len := 0;
-            Cert.Valid := False;
-            return;
-        end if;
+        --  if Cert.Subject_Key_Id_Len + 2 /= Outer_Length then
+        --      Log (FATAL, "Subject Key Identifier Length Mismatch");
+        --      Cert.Subject_Key_Id_Len := 0;
+        --      Cert.Valid := False;
+        --      return;
+        --  end if;
 
         if X509.Logs.Log_Level >= X509.Logs.DEBUG then
             Log (DEBUG, "Subject Key Identifier:");
@@ -282,6 +282,7 @@ is
                                Index      : in out Natural;
                                Cert       : in out Certificate)
     is
+        Start_Idx : Natural := Index;  -- Need to do some bookkeeping for skipped extensions
         Seq_Size  : Unsigned_32;
         Object_ID : OID.Object_ID;
         Critical  : Boolean := False;  --  note default value of false, if missing.
@@ -343,6 +344,9 @@ is
                   return;
                 else
                   Log (WARN, "Unsupported Extension " & Object_ID'Image);
+                  -- Skip this extension + 2 extra for the extension's tag.
+                  -- @TODO is it always 2 bytes?
+                  Index := Start_Idx + Natural(Seq_Size) + 2;
                 end if;
         end case;
 

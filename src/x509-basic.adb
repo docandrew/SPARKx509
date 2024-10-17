@@ -31,7 +31,8 @@ package body X509.Basic is
    begin
       return Tag_C = TYPE_UTF8STRING or
              Tag_C = TYPE_PRINTSTRING or
-             Tag_C = TYPE_NUMSTRING;
+             Tag_C = TYPE_NUMSTRING or
+             Tag_C = TYPE_IA5STRING;
    end Is_String;
 
    ----------------------------------------------------------------------------
@@ -302,7 +303,7 @@ package body X509.Basic is
       use type OID.Object_ID;
    begin
       if Byte_At (Cert_Slice, Index) /= TYPE_OBJECTID then
-         Log (FATAL, "Expected Object Identifier for Signature Algorithm");
+         Log (FATAL, "Expected Object Identifier, got " & Byte_At (Cert_Slice, Index)'Image);
          Object_ID := OID.Unknown;
          Cert.Valid := False;
          return;

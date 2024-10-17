@@ -23,6 +23,7 @@ is
    --  Constructed Types
    TYPE_VERSION     : constant := 16#A0#;
    TYPE_EXTENSIONS  : constant := 16#A3#;
+   TYPE_IA5STRING   : constant := 16#86#;
 
    ----------------------------------------------------------------------------
    --  Is_String
