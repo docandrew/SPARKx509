@@ -84,8 +84,7 @@ is
     procedure Parse_Subject_Key_Identifier (Cert_Slice : String;
                                             Index      : in out Natural;
                                             Cert       : in out Certificate)
-    is       
-        --  Outer_Length : Natural;
+    is
     begin
 
         if not Cert.Valid then
@@ -98,24 +97,11 @@ is
         --     SubjectKeyIdentifier ::= KeyIdentifier
         --     KeyIdentifier ::= OCTET STRING
 
-        --  Parse_Octet_String_Header (Cert_Slice, Index, Outer_Length, Cert);
-        
-        --  if not Cert.Valid then
-        --      return;
-        --  end if;
-        
         Parse_Octet_String (Cert_Slice, Index, Cert.Subject_Key_Id_Len, Cert.Subject_Key_Id, Cert);
 
         if not Cert.Valid then
             return;
         end if;
-
-        --  if Cert.Subject_Key_Id_Len + 2 /= Outer_Length then
-        --      Log (FATAL, "Subject Key Identifier Length Mismatch");
-        --      Cert.Subject_Key_Id_Len := 0;
-        --      Cert.Valid := False;
-        --      return;
-        --  end if;
 
         if X509.Logs.Log_Level >= X509.Logs.DEBUG then
             Log (DEBUG, "Subject Key Identifier:");
@@ -273,7 +259,60 @@ is
             return;
         end if;
       end loop;
-    end Parse_Authority_Info_Access;                                           
+    end Parse_Authority_Info_Access;                         
+
+    ---------------------------------------------------------------------------
+    --  Parse_Authority_Key_Identifier
+    ---------------------------------------------------------------------------
+    procedure Parse_Authority_Key_Identifier (Cert_Slice : String;
+                                              Index      : in out Natural;
+                                              Cert       : in out Certificate)
+    is
+        Ignore : Natural;
+    begin
+        --  AuthorityKeyIdentifier ::= SEQUENCE {
+        --  keyIdentifier             [0] KeyIdentifier           OPTIONAL,
+        --  authorityCertIssuer       [1] GeneralNames            OPTIONAL,
+        --  authorityCertSerialNumber [2] CertificateSerialNumber OPTIONAL  }
+        --
+        --  KeyIdentifier ::= OCTET STRING
+        --
+        --  authorityCertIssuer and authorityCertSerialNumber MUST both
+        --  be present or both be absent
+
+        Log (TRACE, "Parse_Authority_Key_Identifier");
+        
+        if not Cert.Valid then
+            return;
+        end if;
+
+        if Byte_At (Cert_Slice, Index) = TYPE_OCTETSTRING then
+            Parse_Octet_String (Cert_Slice, Index, Cert.Key_Identifier_Len, Cert.Key_Identifier, Cert);
+        end if;
+
+        if Log_Level >= DEBUG then
+            Log (DEBUG, " Authority Key Identifier:");
+            Put_Key_Bytes (Cert.Key_Identifier, Cert.Key_Identifier_Len);
+        end if;
+
+        if not Cert.Valid then
+            return;
+        end if;
+
+        --  Optional authority data present  - otherwise we're done.
+        if Is_String (Cert_Slice (Index)) then
+            -- need both authorityCertIssuer and authorityCertSerialNumber
+            Parse_UTF8_String (Cert_Slice, Index, Cert.Authority_Cert_Issuer, Cert);
+
+            if Byte_At (Cert_Slice, Index) /= TYPE_INTEGER then
+                Cert.Valid := False;
+                return;
+            end if;
+
+            Parse_Integer (Cert_Slice, Index, Cert.Authority_Cert_Serial_Len, Cert.Authority_Cert_Serial_Number, Cert);
+        end if;
+
+    end Parse_Authority_Key_Identifier;                                              
 
     ---------------------------------------------------------------------------
     --  Parse_Extension
@@ -334,6 +373,12 @@ is
                 Parse_Key_Usage (Cert_Slice, Index, Cert);
             when PKIX_AUTHORITY_INFO_ACCESS =>
                 Parse_Authority_Info_Access (Cert_Slice, Index, Cert);
+            when AUTHORITY_KEY_IDENTIFIER =>
+                Parse_Authority_Key_Identifier (Cert_Slice, Index, Cert);
+            --  when CERTIFICATE_POLICIES =>
+            --      Parse_Certificate_Policies (Cert_Slice, Index, Cert);
+            --  when CRL_DISTRIBUTION_POINTS =>
+            --      Parse_CRL_Distribution_Points (Cert_Slice, Index, Cert);
             when others =>
                 --  Per RFC 5280, "If an extension containing unexpected values is marked as critical,
                 --  the implementation MUST reject the certificate or CRL containing the

@@ -128,6 +128,13 @@ is
       Encipher_Only                 : Boolean := False;
       Decipher_Only                 : Boolean := False;
 
+      -- Key Authority Identifier Extension
+      Key_Identifier                : Key_Bytes := (others => 0);
+      Key_Identifier_Len            : Natural := 0;
+      Authority_Cert_Issuer         : UB_UTF8String.Bounded_String;
+      Authority_Cert_Serial_Number  : Key_Bytes := (others => 0);
+      Authority_Cert_Serial_Len     : Natural := 0;
+
       -- Authority Info Access Extension
       OCSP                          : UB_UTF8String.Bounded_String;
       CA_Issuers                    : UB_UTF8String.Bounded_String;

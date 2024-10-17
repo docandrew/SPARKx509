@@ -686,6 +686,7 @@ package body X509.Basic is
                                  Cert       : in out Certificate)
    is
    begin
+    
       if not Cert.Valid then
          Length := 0;
          return;
