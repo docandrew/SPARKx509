@@ -722,6 +722,8 @@ package body X509.Basic is
    is
       Actual_Length : Unsigned_32;
    begin
+      Log (TRACE, "Generic_Parse_String");
+
       if not Cert.Valid then
          S := P.To_Bounded_String ("");
          return;

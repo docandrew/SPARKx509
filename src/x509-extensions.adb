@@ -268,6 +268,8 @@ is
                                               Index      : in out Natural;
                                               Cert       : in out Certificate)
     is
+        Seq_Start : Natural := Index;
+        Seq_Size : Unsigned_32;
         Ignore : Natural;
     begin
         --  AuthorityKeyIdentifier ::= SEQUENCE {
@@ -286,8 +288,20 @@ is
             return;
         end if;
 
+        Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
+
+        Log (TRACE, "Authority Key Identifier Sequence Size:" & Seq_Size'Image);
+
+        
         if Byte_At (Cert_Slice, Index) = TYPE_OCTETSTRING then
             Parse_Octet_String (Cert_Slice, Index, Cert.Key_Identifier_Len, Cert.Key_Identifier, Cert);
+
+            if not Cert.Valid then
+                Log (FATAL, "Expected Octet String for Authority Key Identifier extension");
+                return;
+            else
+                Log (TRACE, "Authority Key Identifier Len: " & Cert.Key_Identifier_Len'Image);
+            end if;
         end if;
 
         if Log_Level >= DEBUG then
@@ -299,17 +313,21 @@ is
             return;
         end if;
 
-        --  Optional authority data present  - otherwise we're done.
-        if Is_String (Cert_Slice (Index)) then
-            -- need both authorityCertIssuer and authorityCertSerialNumber
-            Parse_UTF8_String (Cert_Slice, Index, Cert.Authority_Cert_Issuer, Cert);
+        if Index < Seq_Start + Seq_Size then
+            --  Optional authority data present  - otherwise we're done.
+            if Is_String (Cert_Slice (Index)) then
+                -- need both authorityCertIssuer and authorityCertSerialNumber
+                -- Get authorityCertIssuer
+                Parse_UTF8_String (Cert_Slice, Index, Cert.Authority_Cert_Issuer, Cert);
 
-            if Byte_At (Cert_Slice, Index) /= TYPE_INTEGER then
-                Cert.Valid := False;
-                return;
+                -- Expect authorityCertSerialNumber
+                if Byte_At (Cert_Slice, Index) /= TYPE_INTEGER then
+                    Cert.Valid := False;
+                    return;
+                end if;
+
+                Parse_Integer (Cert_Slice, Index, Cert.Authority_Cert_Serial_Len, Cert.Authority_Cert_Serial_Number, Cert);
             end if;
-
-            Parse_Integer (Cert_Slice, Index, Cert.Authority_Cert_Serial_Len, Cert.Authority_Cert_Serial_Number, Cert);
         end if;
 
     end Parse_Authority_Key_Identifier;                                              
