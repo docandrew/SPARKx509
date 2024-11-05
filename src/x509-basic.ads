@@ -165,6 +165,20 @@ is
       with Pre => Index in Cert_Slice'Range;
 
    ----------------------------------------------------------------------------
+   --  Parse_Context_Specific_Octet_String
+   --
+   --  Given a string of bytes where the type is constructed or 
+   --  context-specific (rather than a generic ASN.1 octet string), read the
+   --  bytes.
+   ----------------------------------------------------------------------------
+   procedure Parse_Context_Specific_Octet_String (Cert_Slice : String;
+                                                  Index      : in out Natural;
+                                                  Length     : out Natural;
+                                                  Bytes      : out Key_Bytes;
+                                                  Cert       : in out Certificate)
+      with Pre => Index in Cert_Slice'Range;
+   
+   ----------------------------------------------------------------------------
    --  Generic_Parse_String
    ----------------------------------------------------------------------------
    generic

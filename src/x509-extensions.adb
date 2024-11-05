@@ -292,41 +292,57 @@ is
 
         Log (TRACE, "Authority Key Identifier Sequence Size:" & Seq_Size'Image);
 
-        
-        if Byte_At (Cert_Slice, Index) = TYPE_OCTETSTRING then
-            Parse_Octet_String (Cert_Slice, Index, Cert.Key_Identifier_Len, Cert.Key_Identifier, Cert);
+        --  TODO: do we always expect this to be 128?
+        if Byte_At (Cert_Slice, Index) = 128 then
+            Log (TRACE, "Parsing Authority Key Identifier as Octet String");
+            Parse_Context_Specific_Octet_String (Cert_Slice, Index, Cert.Key_Identifier_Len, Cert.Key_Identifier, Cert);
 
             if not Cert.Valid then
                 Log (FATAL, "Expected Octet String for Authority Key Identifier extension");
                 return;
             else
                 Log (TRACE, "Authority Key Identifier Len: " & Cert.Key_Identifier_Len'Image);
-            end if;
-        end if;
 
-        if Log_Level >= DEBUG then
-            Log (DEBUG, " Authority Key Identifier:");
-            Put_Key_Bytes (Cert.Key_Identifier, Cert.Key_Identifier_Len);
+                if Log_Level >= DEBUG then
+                    Log (DEBUG, " Authority Key Identifier:");
+                    Put_Key_Bytes (Cert.Key_Identifier, Cert.Key_Identifier_Len);
+                end if;
+            end if;
         end if;
 
         if not Cert.Valid then
             return;
         end if;
 
-        if Index < Seq_Start + Seq_Size then
+        if Index < Seq_Start + Natural(Seq_Size) then
+
             --  Optional authority data present  - otherwise we're done.
             if Is_String (Cert_Slice (Index)) then
+                Put_Line ("b");
                 -- need both authorityCertIssuer and authorityCertSerialNumber
                 -- Get authorityCertIssuer
                 Parse_UTF8_String (Cert_Slice, Index, Cert.Authority_Cert_Issuer, Cert);
 
+                if not Cert.Valid then
+                    Log (TRACE, "Unable to parse UTF8 String for Authority Key Issuer");
+                    return;
+                end if;
+
+                Log (TRACE, "Authority Cert Issuer: " & Cert.Authority_Cert_Issuer'Image);
+
                 -- Expect authorityCertSerialNumber
                 if Byte_At (Cert_Slice, Index) /= TYPE_INTEGER then
                     Cert.Valid := False;
+                    Log (FATAL, "Expected Authority Key Identifier Cert Serial Number");
+
                     return;
                 end if;
 
                 Parse_Integer (Cert_Slice, Index, Cert.Authority_Cert_Serial_Len, Cert.Authority_Cert_Serial_Number, Cert);
+
+                if not Cert.Valid then
+                    Log (FATAL, "Failed to parse Authority Key Identifier Cert Serial Number");
+                end if;
             end if;
         end if;
 

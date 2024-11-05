@@ -712,6 +712,73 @@ package body X509.Basic is
       end loop;
    end Parse_Octet_String;
 
+
+   ----------------------------------------------------------------------------
+   --  Parse_Context_Specific_Octet_String_Header
+   ----------------------------------------------------------------------------
+   procedure Parse_Context_Specific_Octet_String_Header (Cert_Slice : String;
+                                                         Index      : in out Natural;
+                                                         Length     : out Natural;
+                                                         Cert       : in out Certificate)
+   is
+      Size : Unsigned_32;
+   begin
+      if not Cert.Valid then
+         Length := 0;
+         return;
+      end if;
+
+    --  This is context-specific, so we only expect that the tag is something
+    --  greater than 127.
+      if Byte_At (Cert_Slice, Index) < 128 then
+         Log (FATAL, "Expected a context-specific tag at " & Index'Image);
+         Cert.Valid := False;
+         Length := 0;
+         return;
+      end if;
+
+      Index := Index + 1;
+
+      Parse_Size (Cert_Slice, Index, Size, Cert);
+      Log (DEBUG, "Context-specific Octet String Size: " & Size'Image);
+      Length := Natural(Size);
+   end Parse_Context_Specific_Octet_String_Header;
+
+   ----------------------------------------------------------------------------
+   --  Parse_Context_Specific_Octet_String
+   ----------------------------------------------------------------------------
+   procedure Parse_Context_Specific_Octet_String (Cert_Slice : String;
+                                                  Index      : in out Natural;
+                                                  Length     : out Natural;
+                                                  Bytes      : out Key_Bytes;
+                                                  Cert       : in out Certificate)
+   is
+   begin
+      if not Cert.Valid then
+         Length := 0;
+         return;
+      end if;
+
+      Parse_Context_Specific_Octet_String_Header (Cert_Slice, Index, Length, Cert);
+
+      if not Cert.Valid or Length = 0 then
+         Log (FATAL, "Octet String length cannot be zero");
+         return;
+      end if;
+
+      if not Check_Bounds (Cert_Slice, Index, Unsigned_32 (Length)) then
+         Log (FATAL, "Octet String length greater than certificate size");
+         Cert.Valid := False;
+         Length := 0;
+         return;
+      end if;
+
+      for I in 0 .. Length - 1 loop
+         Bytes (I) := Unsigned_8 (Byte_At (Cert_Slice, Index));
+         Index := Index + 1;
+      end loop;
+   end Parse_Context_Specific_Octet_String;
+
    ----------------------------------------------------------------------------
    --  Generic_Parse_String
    ----------------------------------------------------------------------------
