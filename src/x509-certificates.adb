@@ -82,14 +82,15 @@ package body X509.Certificates is
          Index := Index + 1;
          Version := Natural (Byte_At (Cert_Slice, Index));
 
-         if not (Version in 1 | 2 | 3) then
-            Log (FATAL, "Expected X.509 version 1, 2 or 3, got" &
+         if not (Version in 0 | 1 | 2) then
+            Log (FATAL, "Expected X.509 version 0 (v1), 1 (v2) or 2 (v3), got" &
                       Version'Image);
             Cert.Valid := False;
             return;
          else
             Index := Index + 1;
-            Cert.Version := Version;
+            --  DER encodes version as 0=v1, 1=v2, 2=v3
+            Cert.Version := Version + 1;
          end if;
       end if;
    end Parse_Version;
@@ -175,7 +176,7 @@ package body X509.Certificates is
          return;
       end if;
 
-      if Object_ID not in RSA_ENCRYPTION .. ID_EDDSA448_PH then
+      if Object_ID not in Algorithm_Identifier then
          Log (FATAL, "Unknown Signature Algorithm");
          Algorithm := UNKNOWN_ALGORITHM;
          Cert.Valid := False;
@@ -192,6 +193,20 @@ package body X509.Certificates is
             Parse_Null (Cert_Slice, Index, Cert);
          when ID_EDDSA25519 =>
             -- Expect no parameters
+            null;
+         when EC_PUBLIC_KEY =>
+            --  id-ecPublicKey has a named curve OID parameter
+            declare
+               Curve_OID : OID.Object_ID;
+            begin
+               Parse_Object_Identifier (Cert_Slice, Index, Curve_OID, Cert);
+               if Cert.Valid and then Curve_OID /= OID.SECP256R1 then
+                  Log (FATAL, "Unsupported EC curve (only P-256 supported)");
+                  Cert.Valid := False;
+               end if;
+            end;
+         when ECDSA_WITH_SHA256 | ECDSA_WITH_SHA384 =>
+            --  ECDSA signature algorithms have no parameters
             null;
          when others =>
             Log (FATAL, "Unsupported Algorithm " & Algorithm'Image);
@@ -250,6 +265,12 @@ package body X509.Certificates is
       Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
       
       if Cert.Valid and Size /= 0 then
+         --  Check for overflow before computing Seq_End
+         if Natural (Size) > Cert_Slice'Last - Index then
+            Log (FATAL, "Identification sequence exceeds certificate bounds");
+            Cert.Valid := False;
+            return;
+         end if;
          Seq_End := Index + Natural (Size);
       else
          Cert.Valid := False;
@@ -468,6 +489,48 @@ package body X509.Certificates is
       PKey.Key_Size := Natural (Length);
    end Parse_ED25519_Key;
 
+   --  Parse an EC (P-256) public key from a BIT STRING
+   procedure Parse_EC_Key (Cert_Slice : String;
+                           Index      : in out Natural;
+                           Cert       : in out Certificate;
+                           PKey       : in out Public_Key_Type)
+      with Pre => Index in Cert_Slice'Range;
+
+   procedure Parse_EC_Key (Cert_Slice : String;
+                           Index      : in out Natural;
+                           Cert       : in out Certificate;
+                           PKey       : in out Public_Key_Type)
+   is
+      Length : Integer;
+      Key    : Key_Bytes;
+      Ignored_Unused_Bits : Unsigned_8;
+   begin
+      if not Cert.Valid then
+         return;
+      end if;
+
+      Parse_Bit_String (Cert_Slice, Index, Length, Ignored_Unused_Bits, Key, Cert);
+
+      if not Cert.Valid or Length /= EC_P256_PUBLIC_KEY_SIZE then
+         Log (FATAL, "Invalid EC P-256 public key bit string");
+         Cert.Valid := False;
+         return;
+      end if;
+
+      --  Check for uncompressed point format (0x04)
+      if Key (0) /= 16#04# then
+         Log (FATAL, "Only uncompressed EC points supported");
+         Cert.Valid := False;
+         return;
+      end if;
+
+      Put_Line (" EC Key Bytes:");
+      Put_Key_Bytes (Key, Natural (Length));
+
+      PKey.EC_Key := Key;
+      PKey.EC_Key_Size := Natural (Length);
+   end Parse_EC_Key;
+
    --  Fwd declare and contracts
    procedure Parse_Subject_Public_Key (Cert_Slice : String;
                                        Index      : in out Natural;
@@ -487,6 +550,9 @@ package body X509.Certificates is
          when ID_EDDSA25519 =>
             Cert.Subject_Public_Key := (Key_Type => ID_EDDSA25519, others => <>);
             Parse_ED25519_Key (Cert_Slice, Index, Cert, Cert.Subject_Public_Key);
+         when EC_PUBLIC_KEY =>
+            Cert.Subject_Public_Key := (Key_Type => EC_PUBLIC_KEY, others => <>);
+            Parse_EC_Key (Cert_Slice, Index, Cert, Cert.Subject_Public_Key);
          when others =>
             Log (FATAL, "Unsupported public key algorithm.");
             Cert.Valid := False;
@@ -580,8 +646,8 @@ package body X509.Certificates is
                                Cert       : in out Certificate)
    is
       Extensions_Size   : Unsigned_32;
-      Extensions_Start  : Unsigned_32 := Unsigned_32(Index);
       Sequence_Size     : Unsigned_32;
+      Extensions_End    : Natural;
    begin
       --  Expect a header and then a sequence.
       Parse_Extensions_Header (Cert_Slice, Index, Extensions_Size, Cert);
@@ -592,6 +658,9 @@ package body X509.Certificates is
          return;
       end if;
 
+      --  Compute end bound safely (Check_Bounds already validated in header)
+      Extensions_End := Index + Natural (Extensions_Size);
+
       Parse_Sequence_Data (Cert_Slice, Index, Sequence_Size, Cert);
 
       if not Cert.Valid then
@@ -601,7 +670,7 @@ package body X509.Certificates is
       Log (DEBUG, " Sequence Size: " & Sequence_Size'Image);
 
       --  Parse each extension until we reach the end of the sequence
-      while Unsigned_32(Index) < Extensions_Start + Extensions_Size and Cert.Valid loop
+      while Index < Extensions_End and Cert.Valid loop
          X509.Extensions.Parse_Extension (Cert_Slice, Index, Cert);
       end loop;
    end Parse_Extensions;
@@ -628,8 +697,14 @@ package body X509.Certificates is
       Parse_Subject (Cert_Slice, Index, Cert);
       Parse_Subject_Public_Key_Info (Cert_Slice, Index, Cert);
       -- Issuer and subject unique ID are deprecated.
-      -- Extensions are optional
+      -- Extensions are optional but require v3 certificate
       if Byte_At (Cert_Slice, Index) = TYPE_EXTENSIONS then
+         if Cert.Version /= 3 then
+            Log (FATAL, "Extensions present in v" & Cert.Version'Image &
+                 " certificate (only v3 may have extensions)");
+            Cert.Valid := False;
+            return;
+         end if;
          Parse_Extensions (Cert_Slice, Index, Cert);
       end if;
    end Parse_TBS_Certificate;
@@ -644,10 +719,17 @@ package body X509.Certificates is
                               Index      : in out Natural;
                               Cert       : in out Certificate)
    is
-      Size : Unsigned_32;
+      Size      : Unsigned_32;
+      TBS_Start : Natural;
    begin
+      --  Save position before TBS SEQUENCE tag for signature verification
+      TBS_Start := Index;
 
       Parse_Sequence_Data (Cert_Slice, Index, Size, Cert);
+
+      --  Record the TBS byte range (includes SEQUENCE tag + length + content)
+      Cert.TBS_First := TBS_Start;
+      Cert.TBS_Last  := Index + Natural (Size) - 1;
 
       --  TBS (To-be-signed) Certificate
       Parse_TBS_Certificate (Cert_Slice, Index, Cert);
@@ -655,8 +737,30 @@ package body X509.Certificates is
       -- Signature Algorithm and Signature Value
       Parse_Signature_Algorithm (Cert_Slice, Index, Cert.Signature_Algorithm2, Cert);
 
+      --  Parse the actual signature bit string
+      if Cert.Valid then
+         declare
+            Unused_Bits : Unsigned_8;
+         begin
+            Parse_Bit_String (Cert_Slice, Index,
+                              Cert.Signature_Value_Len, Unused_Bits,
+                              Cert.Signature_Value, Cert);
+         end;
+      end if;
+
       if not Cert.Valid then
          Put_Line ("Parse Error.");
+         return;
+      end if;
+
+      --  RFC 5280 Section 4.1.1.2: The signature algorithm in the TBS
+      --  certificate MUST match the outer signature algorithm. Mismatch
+      --  is a frankencert attack vector.
+      if Cert.Signature_Algorithm /= Cert.Signature_Algorithm2 then
+         Log (FATAL, "Signature algorithm mismatch: TBS=" &
+              Cert.Signature_Algorithm'Image & " outer=" &
+              Cert.Signature_Algorithm2'Image);
+         Cert.Valid := False;
          return;
       end if;
 
@@ -695,6 +799,12 @@ package body X509.Certificates is
       end if;
 
       Parse_Cert_Info (Cert_Bytes, Index, Cert);
+
+      --  Reject trailing data after the certificate
+      if Cert.Valid and Index /= Cert_Bytes'Last + 1 then
+         Log (WARN, "Trailing data after certificate (" &
+              Natural'Image (Cert_Bytes'Last + 1 - Index) & " bytes)");
+      end if;
    end Parse_Certificate;
 
 end X509.Certificates;

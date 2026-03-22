@@ -24,12 +24,15 @@ is
 
       --  Elliptic Curve Parameters
       --  1 ISO -> 2 Member Body -> 840 US -> 10045 ANSI X9.62 -> 3 Curves -> 1 Prime
-      --  TODO: CURVES
-      
+      SECP256R1,                       --  1.2.840.10045.3.1.7 (prime256v1 / P-256)
+
       --  Signature Algorithms
       UNKNOWN_ALGORITHM,               --  catch-all for erroneous object IDs when decoding
-      --  1 ISO -> 2 Member Body -> 840 US -> 10045 ANSI X9.57 -> 4 Algorithms
-      --  TODO: ECDSA
+      --  1 ISO -> 2 Member Body -> 840 US -> 10045 ANSI X9.62 -> 2 Public Key Type
+      EC_PUBLIC_KEY,                   --  1.2.840.10045.2.1 (id-ecPublicKey)
+      --  1 ISO -> 2 Member Body -> 840 US -> 10045 ANSI X9.62 -> 4 Signatures
+      ECDSA_WITH_SHA256,               --  1.2.840.10045.4.3.2
+      ECDSA_WITH_SHA384,               --  1.2.840.10045.4.3.3
 
       --  1 ISO -> 2 Member Body -> 840 US -> 113549 RSADSI -> 1 PKCS -> 1 PKCS-1
       --RSA_DEPRECATED,                --  1.2.840.113549.1.1.0 deprecated

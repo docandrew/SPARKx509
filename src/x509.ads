@@ -58,6 +58,7 @@ is
 
    --  Key parameters
    ED25519_PUBLIC_KEY_SIZE : constant := 32;
+   EC_P256_PUBLIC_KEY_SIZE : constant := 65;  --  0x04 + 32 + 32
 
    type Public_Key_Type (Key_Type : Algorithm_Identifier := RSA_ENCRYPTION) is record
       case Key_Type is
@@ -68,10 +69,18 @@ is
          when ID_EDDSA25519 =>
             Key_Size        : Natural;
             Key             : Key_Bytes;
+         when EC_PUBLIC_KEY =>
+            EC_Key_Size     : Natural;
+            EC_Key          : Key_Bytes;  --  uncompressed: 04 || X || Y
          when others =>
             null;
       end case;
    end record;
+
+   --  Subject Alternative Names
+   Max_SAN_DNS_Names : constant := 10;
+   type SAN_Index is range 1 .. Max_SAN_DNS_Names;
+   type SAN_DNS_Array is array (SAN_Index) of UB_Common_Name.Bounded_String;
 
    -- @field Valid is False if an error was found during parsing, True otherwise.
    -- @field Version is the version of this x.509 certificate
@@ -135,12 +144,25 @@ is
       Authority_Cert_Serial_Number  : Key_Bytes := (others => 0);
       Authority_Cert_Serial_Len     : Natural := 0;
 
+      -- Subject Alternative Names Extension
+      SAN_DNS_Names                 : SAN_DNS_Array;
+      SAN_DNS_Name_Count            : Natural := 0;
+
       -- Authority Info Access Extension
       OCSP                          : UB_UTF8String.Bounded_String;
       CA_Issuers                    : UB_UTF8String.Bounded_String;
 
+      --  Raw TBS certificate byte range (indices into the Cert_Bytes
+      --  string passed to Parse_Certificate). Used for signature
+      --  verification.
+      TBS_First                     : Natural := 0;
+      TBS_Last                      : Natural := 0;
+
       --  Signature Algorithm specified again for validation
       Signature_Algorithm2          : Algorithm_Identifier;
-      Signature                     : Public_Key_Type;
+
+      --  Certificate signature value
+      Signature_Value               : Key_Bytes := (others => 0);
+      Signature_Value_Len           : Natural := 0;
    end record;
 end X509;

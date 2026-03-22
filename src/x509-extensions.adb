@@ -139,9 +139,10 @@ is
         Num_Bitflags := Bit_String_Size * 8 - Natural(Bit_String_Unused_Bits);
 
         -- Per RFC 5280, Key Usage extension has up to 9 bitflags.
-        -- encipherOnly and decipherOnly; may be missing.
-        if Num_Bitflags /= 7 and Num_Bitflags /= 9 then
-            Log (FATAL, "Expected RFC 5280 bitflags for Key Usage extension, got" & Num_Bitflags'Image);
+        -- DER encoding may truncate trailing zero bits, so any
+        -- count from 1 to 9 is valid.
+        if Num_Bitflags < 1 or Num_Bitflags > 9 then
+            Log (FATAL, "Expected 1-9 bitflags for Key Usage extension, got" & Num_Bitflags'Image);
             Cert.Valid := False;
             return;
         end if;
@@ -179,7 +180,7 @@ is
                                            Cert       : in out Certificate)
     is
       Authority_Info_Size   : Unsigned_32;
-      Authority_Info_Start  : Unsigned_32 := Unsigned_32(Index);
+      Authority_Info_End    : Natural;
 
       Access_Desc_Size      : Unsigned_32;
       Access_Method         : Object_ID;
@@ -214,8 +215,10 @@ is
          return;
       end if;
 
+      Authority_Info_End := Index + Natural (Authority_Info_Size);
+
       --  Parse each access description until we reach the end of the sequence
-      while Unsigned_32(Index) < Authority_Info_Start + Authority_Info_Size and Cert.Valid loop
+      while Index < Authority_Info_End and Cert.Valid loop
         Parse_Sequence_Data (Cert_Slice, Index, Access_Desc_Size, Cert);
 
         if not Cert.Valid then
@@ -349,6 +352,109 @@ is
     end Parse_Authority_Key_Identifier;                                              
 
     ---------------------------------------------------------------------------
+    --  Parse_Subject_Alt_Names
+    --  RFC 5280, Section 4.2.1.6
+    ---------------------------------------------------------------------------
+    procedure Parse_Subject_Alt_Names (Cert_Slice : String;
+                                       Index      : in out Natural;
+                                       Ext_Len    : Natural;
+                                       Cert       : in out Certificate)
+        with Pre => Index in Cert_Slice'Range;
+
+    procedure Parse_Subject_Alt_Names (Cert_Slice : String;
+                                       Index      : in out Natural;
+                                       Ext_Len    : Natural;
+                                       Cert       : in out Certificate)
+    is
+        End_Index : Natural;
+        Seq_Size  : Unsigned_32;
+        Tag       : Unsigned_8;
+        Len       : Unsigned_32;
+    begin
+        if not Cert.Valid then
+            return;
+        end if;
+
+        Log (TRACE, "Parse_Subject_Alt_Names");
+
+        --  Overflow-safe end index calculation
+        if Ext_Len > Cert_Slice'Last - Index then
+            Log (FATAL, "SAN extension exceeds certificate bounds");
+            Cert.Valid := False;
+            return;
+        end if;
+        End_Index := Index + Ext_Len;
+
+        --  SubjectAltName ::= GeneralNames
+        --  GeneralNames ::= SEQUENCE SIZE (1..MAX) OF GeneralName
+        --  GeneralName ::= CHOICE {
+        --       dNSName                  [2] IA5String,
+        --       iPAddress                [7] OCTET STRING,
+        --       ... }
+        Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
+
+        if not Cert.Valid then
+            return;
+        end if;
+
+        Cert.SAN_DNS_Name_Count := 0;
+
+        while Index < End_Index and Cert.Valid loop
+            Tag := Byte_At (Cert_Slice, Index);
+            Index := Index + 1;
+
+            if not (Index in Cert_Slice'Range) then
+                Cert.Valid := False;
+                Log (FATAL, "SAN: unexpected end of data");
+                return;
+            end if;
+
+            --  Parse length (short form only for SAN entries)
+            Len := Unsigned_32 (Byte_At (Cert_Slice, Index));
+            Index := Index + 1;
+
+            --  Ensure entry doesn't extend past SAN extension boundary
+            if Index + Natural (Len) > End_Index then
+                Log (FATAL, "SAN entry exceeds extension boundary");
+                Cert.Valid := False;
+                return;
+            end if;
+
+            case Tag is
+                when 16#82# =>
+                    --  dNSName [2] IA5String (context-specific, primitive)
+                    if Cert.SAN_DNS_Name_Count < Max_SAN_DNS_Names and
+                       Index + Natural (Len) - 1 in Cert_Slice'Range and
+                       Natural (Len) <= 64
+                    then
+                        Cert.SAN_DNS_Name_Count := Cert.SAN_DNS_Name_Count + 1;
+                        declare
+                            Name : String (1 .. Natural (Len));
+                        begin
+                            for I in 0 .. Natural (Len) - 1 loop
+                                Name (I + 1) := Cert_Slice (Index + I);
+                            end loop;
+                            Cert.SAN_DNS_Names (SAN_Index (Cert.SAN_DNS_Name_Count)) :=
+                                UB_Common_Name.To_Bounded_String (Name);
+                        end;
+                        Log (DEBUG, " SAN dNSName: " &
+                            UB_Common_Name.To_String (
+                                Cert.SAN_DNS_Names (SAN_Index (Cert.SAN_DNS_Name_Count))));
+                    else
+                        Log (WARN, "SAN: dNSName too long or too many SANs, skipping");
+                    end if;
+                    Index := Index + Natural (Len);
+                when others =>
+                    --  Skip other GeneralName types (iPAddress, rfc822Name, etc.)
+                    Log (DEBUG, " SAN: skipping GeneralName tag" & Tag'Image);
+                    Index := Index + Natural (Len);
+            end case;
+        end loop;
+
+        Log (DEBUG, " SAN DNS Name Count:" & Cert.SAN_DNS_Name_Count'Image);
+    end Parse_Subject_Alt_Names;
+
+    ---------------------------------------------------------------------------
     --  Parse_Extension
     ---------------------------------------------------------------------------
     procedure Parse_Extension (Cert_Slice : String;
@@ -357,6 +463,7 @@ is
     is
         Start_Idx : Natural := Index;  -- Need to do some bookkeeping for skipped extensions
         Seq_Size  : Unsigned_32;
+        Ext_End   : Natural;  --  End position of this extension
         Object_ID : OID.Object_ID;
         Critical  : Boolean := False;  --  note default value of false, if missing.
         Ext_Len   : Natural;
@@ -373,15 +480,30 @@ is
         -- extension value. The extension value is defined as an uninterpreted
         -- sequence of bytes. The extension value format and content are
         -- defined by the extension specification.
-        
+
         if not Cert.Valid then
             return;
         end if;
 
         Log (TRACE, "Parse_Extension");
-        
+
         Parse_Sequence_Data (Cert_Slice, Index, Seq_Size, Cert);
+        --  Record extension end so we can skip past it if parsing fails
+        Ext_End := Index + Natural (Seq_Size);
         Parse_Object_Identifier (Cert_Slice, Index, Object_ID, Cert);
+
+        --  For unknown OIDs, Parse_Object_Identifier sets Valid=False.
+        --  For non-critical unknown extensions, recover and skip.
+        if Object_ID = OID.UNKNOWN then
+            Cert.Valid := True;  --  recover from unknown OID
+            Log (WARN, "Skipping unknown extension");
+            Index := Ext_End;
+            return;
+        end if;
+
+        if not Cert.Valid then
+            return;
+        end if;
 
         -- Critical field?
         if Byte_At (Cert_Slice, Index) = TYPE_BOOLEAN then
@@ -409,6 +531,8 @@ is
                 Parse_Authority_Info_Access (Cert_Slice, Index, Cert);
             when AUTHORITY_KEY_IDENTIFIER =>
                 Parse_Authority_Key_Identifier (Cert_Slice, Index, Cert);
+            when SUBJECT_ALT_NAME =>
+                Parse_Subject_Alt_Names (Cert_Slice, Index, Ext_Len, Cert);
             --  when CERTIFICATE_POLICIES =>
             --      Parse_Certificate_Policies (Cert_Slice, Index, Cert);
             --  when CRL_DISTRIBUTION_POINTS =>
@@ -423,11 +547,18 @@ is
                   return;
                 else
                   Log (WARN, "Unsupported Extension " & Object_ID'Image);
-                  -- Skip this extension + 2 extra for the extension's tag.
-                  -- @TODO is it always 2 bytes?
-                  Index := Start_Idx + Natural(Seq_Size) + 2;
+                  --  Skip over extension content (Ext_Len bytes from
+                  --  current Index, which is right after the OCTET STRING
+                  --  header).
+                  Index := Index + Ext_Len;
                 end if;
         end case;
+
+        --  Ensure we advance past the full extension regardless of
+        --  whether individual field parsing consumed all bytes.
+        if Index < Ext_End then
+            Index := Ext_End;
+        end if;
 
     end Parse_Extension;
 end X509.Extensions;

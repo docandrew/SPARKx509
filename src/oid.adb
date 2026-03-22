@@ -40,6 +40,19 @@ is
       (16#09#, 16#92#, 16#26#, 16#89#, 16#93#, 16#F3#, 16#2C#, 16#64#,
        16#01#, 16#26#));
 
+   --  1.2.840.10045.3.1.7 (secp256r1 / prime256v1 / P-256)
+   SECP256R1_STR : constant String := To_String (
+      (16#2A#, 16#86#, 16#48#, 16#CE#, 16#3D#, 16#03#, 16#01#, 16#07#));
+   --  1.2.840.10045.2.1 (id-ecPublicKey)
+   EC_PUBLIC_KEY_STR : constant String := To_String (
+      (16#2A#, 16#86#, 16#48#, 16#CE#, 16#3D#, 16#02#, 16#01#));
+   --  1.2.840.10045.4.3.2 (ecdsa-with-SHA256)
+   ECDSA_WITH_SHA256_STR : constant String := To_String (
+      (16#2A#, 16#86#, 16#48#, 16#CE#, 16#3D#, 16#04#, 16#03#, 16#02#));
+   --  1.2.840.10045.4.3.3 (ecdsa-with-SHA384)
+   ECDSA_WITH_SHA384_STR : constant String := To_String (
+      (16#2A#, 16#86#, 16#48#, 16#CE#, 16#3D#, 16#04#, 16#03#, 16#03#));
+
    RSA_ENCRYPTION_STR : constant String := To_String (
       (16#2A#, 16#86#, 16#48#, 16#86#, 16#F7#, 16#0D#, 16#01#, 16#01#, 
        16#01#));
@@ -265,6 +278,10 @@ is
       elsif Packed = CNAME_RECORD_STR      then return CNAME_RECORD;
       elsif Packed = ASSOCIATED_DOMAIN_STR then return ASSOCIATED_DOMAIN;
       elsif Packed = ASSOCIATED_NAME_STR   then return ASSOCIATED_NAME;
+      elsif Packed = SECP256R1_STR          then return SECP256R1;
+      elsif Packed = EC_PUBLIC_KEY_STR      then return EC_PUBLIC_KEY;
+      elsif Packed = ECDSA_WITH_SHA256_STR  then return ECDSA_WITH_SHA256;
+      elsif Packed = ECDSA_WITH_SHA384_STR  then return ECDSA_WITH_SHA384;
       elsif Packed = RSA_ENCRYPTION_STR    then return RSA_ENCRYPTION;
       elsif Packed = MD2_WITH_RSA_STR      then return MD2_WITH_RSA;
       elsif Packed = MD4_WITH_RSA_STR      then return MD4_WITH_RSA;

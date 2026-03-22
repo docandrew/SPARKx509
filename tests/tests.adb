@@ -8,6 +8,7 @@ with GNAT.Traceback.Symbolic;
 
 with X509_Tests;
 with Base64_Tests;
+with PEM_Tests;
 
 procedure Tests is
    
@@ -71,6 +72,7 @@ begin
 
    Base64_Tests;
    X509_Tests;
+   PEM_Tests;
 
 exception
    when E : others =>

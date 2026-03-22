@@ -17,8 +17,15 @@ package body X509.Basic is
    function Check_Bounds (Cert_Slice : String;
                           Index      : Natural;
                           Obj_Len    : Unsigned_32) return Boolean is
+      Idx : constant Unsigned_64 := Unsigned_64 (Index);
+      Len : constant Unsigned_64 := Unsigned_64 (Obj_Len);
+      Last : constant Unsigned_64 := Unsigned_64 (Cert_Slice'Last);
    begin
-      return Unsigned_32 (Index) + Obj_Len - 1 <= Unsigned_32 (Cert_Slice'Last);
+      --  Use Unsigned_64 to prevent overflow in addition
+      if Obj_Len = 0 then
+         return Index in Cert_Slice'Range;
+      end if;
+      return Idx + Len - 1 <= Last;
    end Check_Bounds;
 
    ---------------------------------------------------------------------------
@@ -72,15 +79,18 @@ package body X509.Basic is
 
       Index := Index + 1;
 
-      --  Expect 0x00 for False, any other value for True.
+      --  DER requires Boolean to be exactly 0x00 (False) or 0xFF (True).
+      --  Any other value is a DER encoding violation.
       if Byte_At (Cert_Slice, Index) = 0 then
          Value := False;
-      else
-         if Byte_At (Cert_Slice, Index) /= 16#FF# then
-            Log (WARN, "Boolean value not 0x00 or 0xFF. Though legal, it is uncommon and may indicate a malicious or erroneous certificate.");
-         end if;
-
+      elsif Byte_At (Cert_Slice, Index) = 16#FF# then
          Value := True;
+      else
+         Log (FATAL, "DER Boolean must be 0x00 or 0xFF, got" &
+              Byte_At (Cert_Slice, Index)'Image);
+         Cert.Valid := False;
+         Value := False;
+         return;
       end if;
 
       Index := Index + 1;
@@ -143,6 +153,14 @@ package body X509.Basic is
          --  is almost certainly malicious.
          Num_Octets := (Byte_At (Cert_Slice, Index) and 16#7F#);
 
+         --  DER forbids indefinite length form (0x80 => Num_Octets = 0)
+         if Num_Octets = 0 then
+            Log (FATAL, "Indefinite length form not allowed in DER");
+            Cert.Valid := False;
+            Size := 0;
+            return;
+         end if;
+
          if Num_Octets > 4 then
             Cert.Valid := False;
             Size := 0;
@@ -158,12 +176,30 @@ package body X509.Basic is
             Index := Index + 1;
 
             for I in reverse 0 .. Num_Octets - 1 loop
-               Size := Size or 
+               Size := Size or
                         Shift_Left (Unsigned_32 (
-                           Byte_At (Cert_Slice, Index)), 
+                           Byte_At (Cert_Slice, Index)),
                            Natural (8 * I));
                Index := Index + 1;
             end loop;
+
+            --  DER requires minimal length encoding: if Size fits in
+            --  short form (< 128), long form must not be used.
+            if Size < 128 then
+               Log (FATAL, "Non-minimal DER length encoding");
+               Cert.Valid := False;
+               Size := 0;
+               return;
+            end if;
+
+            --  Also reject non-minimal long form (e.g. 2 octets for
+            --  a value that fits in 1 octet)
+            if Num_Octets > 1 and Size < 256 then
+               Log (FATAL, "Non-minimal DER long-form length encoding");
+               Cert.Valid := False;
+               Size := 0;
+               return;
+            end if;
          end if;
       end if;
    end Parse_Size;
@@ -403,8 +439,15 @@ package body X509.Basic is
       --  Read in raw bytes
       Index := Index + 1;
 
+      if not Check_Bounds (Cert_Slice, Index, Unsigned_32 (Size)) then
+         Log (FATAL, "Integer extends past certificate boundary");
+         Value := 0;
+         Cert.Valid := False;
+         return;
+      end if;
+
       for I in 0 .. Size - 1 loop
-         Raw := Raw or 
+         Raw := Raw or
                   Shift_Left (Unsigned_32 (Byte_At (Cert_Slice, Index)), (8 * I));
          Index := Index + 1;
       end loop;
@@ -522,9 +565,23 @@ package body X509.Basic is
 
       -- Adjust length to account for unused bits byte
       Length := Natural (Size) - 1;
-   
+
       Log (TRACE, "Bit String Size (bytes):" & Length'Image);
       Log (TRACE, "Unused Bits: " & Unused_Bits'Image);
+
+      if Length > Key_Bytes'Length then
+         Log (FATAL, "Bit string too large");
+         Cert.Valid := False;
+         Length := 0;
+         return;
+      end if;
+
+      if not Check_Bounds (Cert_Slice, Index, Unsigned_32 (Length)) then
+         Log (FATAL, "Bit string extends past certificate boundary");
+         Cert.Valid := False;
+         Length := 0;
+         return;
+      end if;
 
       --  Read in the bytes
       for I in 0 .. Length - 1 loop
