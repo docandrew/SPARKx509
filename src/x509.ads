@@ -1,168 +1,334 @@
-with Ada.Strings.Bounded; use Ada.Strings.Bounded;
-with Ada.Calendar; use Ada.Calendar;
 with Interfaces; use Interfaces;
 
-with OID; use OID;
+--  X.509 Certificate Parser (SPARK-verified)
+--
+--  Certificates are parsed from DER-encoded byte sequences.
+--  The Certificate type stores:
+--    - Crypto fields (key, signature) in fixed-size internal buffers
+--    - Name/extension fields as Span offsets into the original DER
+--
+--  Callers keep the DER buffer alive and pass it to getters that
+--  need to resolve name fields. Crypto getters are self-contained.
+--
+--  Usage:
+--    Parse (DER, Cert, OK);
+--    if OK and then Has_Subject_CN (Cert) then
+--       CN_Span := Subject_CN (Cert);
+--       --  DER (CN_Span.First .. CN_Span.Last) is the CN bytes
+--    end if;
+--    if PK_Algorithm (Cert) = Algo_RSA then
+--       --  PK_Data (Cert) returns the modulus bytes
+--    end if;
 
 package X509 with
-   SPARK_Mode
+   SPARK_Mode => On
 is
-   --  X.509 strings are defined with upper-bounds, per RFC 5280
-   --  package UB_Name        is new Generic_Bounded_Length (Max => 32768);
-   package UB_Common_Name     is new Generic_Bounded_Length (Max => 64);
-   package UB_Locality        is new Generic_Bounded_Length (Max => 128);
-   package UB_State           is new Generic_Bounded_Length (Max => 128);
-   package UB_Org             is new Generic_Bounded_Length (Max => 64);
-   package UB_Org_Unit        is new Generic_Bounded_Length (Max => 64);
-   package UB_Title           is new Generic_Bounded_Length (Max => 64);
-   package UB_Given_Name      is new Generic_Bounded_Length (Max => 16);
-   package UB_Surname         is new Generic_Bounded_Length (Max => 40);
-   package UB_Initials        is new Generic_Bounded_Length (Max => 5);
-   package UB_Pseudonym       is new Generic_Bounded_Length (Max => 128);
-   package UB_Generation      is new Generic_Bounded_Length (Max => 3);
-   package UB_Serial_Number   is new Generic_Bounded_Length (Max => 64);
-   package UB_Match           is new Generic_Bounded_Length (Max => 128);
-   package UB_Email           is new Generic_Bounded_Length (Max => 255);
-   package UB_Country_Name    is new Generic_Bounded_Length (Max => 2);
-   package UB_Country_Numeric is new Generic_Bounded_Length (Max => 3);
-   package UB_Postal_Code     is new Generic_Bounded_Length (Max => 16);
+   subtype Byte is Unsigned_8;
+   subtype N32  is Unsigned_32;
 
-   -- UTF8 String
-   package UB_UTF8String      is new Generic_Bounded_Length (Max => 200);
+   type Byte_Seq is array (N32 range <>) of Byte;
 
-   subtype Algorithm_Identifier is OID.Object_ID range UNKNOWN_ALGORITHM .. ID_EDDSA448_PH;
+   --================================================================
+   --  Algorithm identifiers
+   --================================================================
 
-   --  Maximum length of serial number is 20 per RFC 5280
-   type Serial_Number_Length is new Natural range 1 .. 20;
-   type Serial_Number_Type is array (Serial_Number_Length) of Unsigned_8;
+   type Algorithm_ID is
+     (Algo_Unknown,
+      --  Signature algorithms
+      Algo_RSA_PKCS1_SHA1,
+      Algo_RSA_PKCS1_SHA256,
+      Algo_RSA_PKCS1_SHA384,
+      Algo_RSA_PKCS1_SHA512,
+      Algo_RSA_PSS,
+      Algo_ECDSA_P256_SHA256,
+      Algo_ECDSA_P384_SHA384,
+      Algo_Ed25519,
+      --  Public key algorithms
+      Algo_RSA,
+      Algo_EC_P256,
+      Algo_EC_P384,
+      Algo_EC_Ed25519);
 
-   --  Identification of a subject or issuer
-   type Identification_Type is record
-      Country             : UB_Country_Name.Bounded_String;
-      State               : UB_State.Bounded_String;
-      Locality            : UB_Locality.Bounded_String;
-      Common_Name         : UB_Common_Name.Bounded_String;
-      Org                 : UB_Org.Bounded_String;
-      Org_Unit            : UB_Org_Unit.Bounded_String;
-      Title               : UB_Title.Bounded_String;
-      Given_Name          : UB_Given_Name.Bounded_String;
-      Surname             : UB_Surname.Bounded_String;
-      Initials            : UB_Initials.Bounded_String;
-      Pseudonym           : UB_Pseudonym.Bounded_String;
-      Generation          : UB_Generation.Bounded_String;
+   --================================================================
+   --  Span: a byte range [First..Last] into the DER buffer
+   --  Present = False means the field was not found during parsing.
+   --================================================================
+
+   type Span is record
+      First   : N32     := 0;
+      Last    : N32     := 0;
+      Present : Boolean := False;
    end record;
 
-   type UTF8_String is new UB_UTF8String.Bounded_String;
+   function Span_Length (S : Span) return N32 is
+     (if S.Present and then S.Last >= S.First
+      then S.Last - S.First + 1
+      else 0);
 
-   type Key_Bytes is array (Natural range 0 .. 65535) of Unsigned_8;
+   --================================================================
+   --  Date/time (pure record, no exceptions, fully SPARK)
+   --================================================================
 
-   --  Key parameters
-   ED25519_PUBLIC_KEY_SIZE : constant := 32;
-   EC_P256_PUBLIC_KEY_SIZE : constant := 65;  --  0x04 + 32 + 32
-
-   type Public_Key_Type (Key_Type : Algorithm_Identifier := RSA_ENCRYPTION) is record
-      case Key_Type is
-         when RSA_ENCRYPTION =>
-            Modulus_Length  : Natural;
-            Modulus         : Key_Bytes;
-            Exponent        : Unsigned_32;
-         when ID_EDDSA25519 =>
-            Key_Size        : Natural;
-            Key             : Key_Bytes;
-         when EC_PUBLIC_KEY =>
-            EC_Key_Size     : Natural;
-            EC_Key          : Key_Bytes;  --  uncompressed: 04 || X || Y
-         when others =>
-            null;
-      end case;
+   type Date_Time is record
+      Year   : Natural := 0;
+      Month  : Natural := 0;
+      Day    : Natural := 0;
+      Hour   : Natural := 0;
+      Minute : Natural := 0;
+      Second : Natural := 0;
    end record;
 
+   function DT_Before (A, B : Date_Time) return Boolean is
+     (A.Year < B.Year
+      or else (A.Year = B.Year and A.Month < B.Month)
+      or else (A.Year = B.Year and A.Month = B.Month and A.Day < B.Day)
+      or else (A.Year = B.Year and A.Month = B.Month and A.Day = B.Day
+               and A.Hour < B.Hour)
+      or else (A.Year = B.Year and A.Month = B.Month and A.Day = B.Day
+               and A.Hour = B.Hour and A.Minute < B.Minute)
+      or else (A.Year = B.Year and A.Month = B.Month and A.Day = B.Day
+               and A.Hour = B.Hour and A.Minute = B.Minute
+               and A.Second < B.Second));
+
+   function DT_Before_Or_Equal (A, B : Date_Time) return Boolean is
+     (not DT_Before (B, A));
+
+   --================================================================
+   --  Certificate (opaque type)
+   --================================================================
+
+   type Certificate is private;
+
+   --================================================================
+   --  Parser
+   --================================================================
+
+   procedure Parse
+     (DER  : in     Byte_Seq;
+      Cert :    out Certificate;
+      OK   :    out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last;
+
+   --================================================================
+   --  Validity & version
+   --================================================================
+
+   function Is_Valid   (Cert : Certificate) return Boolean;
+   function Version    (Cert : Certificate) return Natural;
+
+   --================================================================
+   --  Name field getters (return Spans into the DER)
+   --  Caller uses the span to slice the original DER buffer.
+   --================================================================
+
+   --  Issuer fields
+   function Issuer_CN       (Cert : Certificate) return Span;
+   function Issuer_Org      (Cert : Certificate) return Span;
+   function Issuer_Country  (Cert : Certificate) return Span;
+
+   --  Subject fields
+   function Subject_CN      (Cert : Certificate) return Span;
+   function Subject_Org     (Cert : Certificate) return Span;
+   function Subject_Country (Cert : Certificate) return Span;
+
+   --  Convenience: check presence
+   function Has_Issuer_CN   (Cert : Certificate) return Boolean;
+   function Has_Subject_CN  (Cert : Certificate) return Boolean;
+
+   --================================================================
    --  Subject Alternative Names
-   Max_SAN_DNS_Names : constant := 10;
-   type SAN_Index is range 1 .. Max_SAN_DNS_Names;
-   type SAN_DNS_Array is array (SAN_Index) of UB_Common_Name.Bounded_String;
+   --================================================================
 
-   -- @field Valid is False if an error was found during parsing, True otherwise.
-   -- @field Version is the version of this x.509 certificate
-   -- @field Serial is the serial number of this x.509 certificate
-   -- @field Serial_Length is the length of the serial number, in bytes
-   -- @field Signature_Algorithm, see Signature_Algorithm_Type
-   -- @field Issuer is issuer details, see Identification_Type
-   -- @field Subject is subject details, see Identification_Type
-   -- @field Valid_From is the start of the certificate validity period
-   -- @field Valid_To is the end of the certificate validity period
-   -- @field Public_Key_Algorithm is the algorithm for the public key
-   -- @field Public_Key_Len is the length of the public key, in bytes
-   -- @field Public_Key are the actual bytes of the public key
-   -- @field Extensions_Len is the size of the extensions, in bytes
+   Max_SANs : constant := 16;
+
+   function SAN_Count (Cert : Certificate) return Natural;
+   function SAN_DNS   (Cert : Certificate; Index : Positive) return Span
+   with Pre => Index >= 1 and Index <= SAN_Count (Cert)
+               and SAN_Count (Cert) <= Max_SANs;
+
+   --================================================================
+   --  Public key getters (self-contained, copied during parse)
+   --================================================================
+
+   Max_PK_Bytes : constant := 1024;  --  RSA-8192 modulus
+
+   function PK_Algorithm  (Cert : Certificate) return Algorithm_ID;
+   function PK_Length      (Cert : Certificate) return N32;
+   function PK_Data        (Cert : Certificate) return Byte_Seq
+   with Pre  => PK_Length (Cert) > 0
+                and PK_Length (Cert) <= Max_PK_Bytes,
+        Post => PK_Data'Result'First = 0
+                and PK_Data'Result'Length = PK_Length (Cert);
+   function RSA_Exponent   (Cert : Certificate) return Unsigned_32;
+
+   --================================================================
+   --  Signature getters (self-contained, copied during parse)
+   --================================================================
+
+   Max_Sig_Bytes : constant := 1024;  --  RSA-8192 signature
+
+   function Sig_Algorithm  (Cert : Certificate) return Algorithm_ID;
+   function Sig_Length      (Cert : Certificate) return N32;
+   function Sig_Data        (Cert : Certificate) return Byte_Seq
+   with Pre  => Sig_Length (Cert) > 0
+                and Sig_Length (Cert) <= Max_Sig_Bytes,
+        Post => Sig_Data'Result'First = 0
+                and Sig_Data'Result'Length = Sig_Length (Cert);
+
+   --================================================================
+   --  TBS (To Be Signed) — span into the DER
+   --  Used for signature verification: hash DER(TBS.First..TBS.Last)
+   --================================================================
+
+   function TBS (Cert : Certificate) return Span;
+
+   --================================================================
+   --  Validity dates
+   --================================================================
+
+   function Not_Before (Cert : Certificate) return Date_Time;
+   function Not_After  (Cert : Certificate) return Date_Time;
+
+   --================================================================
+   --  Extension getters
+   --================================================================
+
+   function Is_CA         (Cert : Certificate) return Boolean;
+   function Has_Path_Len_Constraint (Cert : Certificate) return Boolean;
+   function Path_Len_Constraint     (Cert : Certificate) return Natural;
+   function Has_Key_Usage (Cert : Certificate) return Boolean;
+
+   --  Key usage bits (RFC 5280 Section 4.2.1.3)
+   function KU_Digital_Signature (Cert : Certificate) return Boolean;
+   function KU_Key_Encipherment  (Cert : Certificate) return Boolean;
+   function KU_Key_Cert_Sign     (Cert : Certificate) return Boolean;
+   function KU_CRL_Sign          (Cert : Certificate) return Boolean;
+
+   --  Authority Key Identifier
+   function Authority_Key_ID (Cert : Certificate) return Span;
+   function Subject_Key_ID   (Cert : Certificate) return Span;
+
+   --================================================================
+   --  Serial number
+   --================================================================
+
+   function Serial (Cert : Certificate) return Span;
+
+   --================================================================
+   --  Validation
+   --================================================================
+
+   --  Check if the certificate is currently within its validity period.
+   --  Now is typically Ada.Calendar.Clock.
+   function Is_Date_Valid
+     (Cert : Certificate;
+      Now  : Date_Time) return Boolean;
+
+   --  Check if a hostname matches the certificate.
+   --  Checks Subject CN and SAN DNS names.
+   --  DER is needed to resolve the Span-based name fields.
+   function Matches_Hostname
+     (Cert     : Certificate;
+      DER      : Byte_Seq;
+      Hostname : String) return Boolean
+   with Pre => DER'First = 0 and DER'Last < N32'Last;
+
+   --  True if the cert contains a critical extension we don't understand.
+   --  RFC 5280: MUST reject certs with unrecognized critical extensions.
+   function Has_Unknown_Critical_Extension (Cert : Certificate) return Boolean;
+   function Has_Duplicate_Extension (Cert : Certificate) return Boolean;
+   function Has_Extensions (Cert : Certificate) return Boolean;
+   function Sig_Algorithm_2 (Cert : Certificate) return Algorithm_ID;
+   function Is_Key_Usage_Critical (Cert : Certificate) return Boolean;
+
+   --  Comprehensive structural validation (everything except signature).
+   --  The postcondition formally encodes RFC 5280 requirements:
+   --  if True is returned, ALL of these conditions hold.
+   function Is_Structurally_Valid
+     (Cert : Certificate;
+      Now  : Date_Time) return Boolean
+   with Post =>
+     (if Is_Structurally_Valid'Result then
+        --  RFC 5280 4.1: Must have parsed successfully
+        Is_Valid (Cert)
+        --  RFC 5280 4.2: No unrecognized critical extensions
+        and not Has_Unknown_Critical_Extension (Cert)
+        --  RFC 5280 4.1.2.5: Must be within validity period
+        and Is_Date_Valid (Cert, Now)
+        --  Must have known signature algorithm
+        and Sig_Algorithm (Cert) /= Algo_Unknown
+        --  Must have known public key algorithm
+        and PK_Algorithm (Cert) /= Algo_Unknown
+        --  Must have TBS data for signature verification
+        and TBS (Cert).Present
+        --  RFC 5280 4.1.2.1: v1/v2 certs must not have extensions
+        and (Version (Cert) >= 3 or else not Has_Extensions (Cert))
+        --  RFC 5280 4.2: No duplicate extensions
+        and not Has_Duplicate_Extension (Cert)
+        --  RFC 5280 4.1.1.2: TBS sig algo must match outer sig algo
+        --  (when both are recognized)
+        and (Sig_Algorithm_2 (Cert) = Algo_Unknown
+             or else Sig_Algorithm (Cert) = Sig_Algorithm_2 (Cert))
+        --  RFC 5280 4.2.1.3: Key Usage must be critical when present
+        and (not Has_Key_Usage (Cert)
+             or else Is_Key_Usage_Critical (Cert)));
+
+private
+
+   type SAN_Array is array (1 .. Max_SANs) of Span;
+
    type Certificate is record
-      Valid                         : Boolean;
-      Version                       : Integer;
-      Serial_Length                 : Serial_Number_Length;
-      Serial                        : Serial_Number_Type := (others => 0);
-      Signature_Algorithm           : Algorithm_Identifier;
-      Issuer                        : Identification_Type;
-      Valid_From                    : Time;
-      Valid_To                      : Time;
-      Subject                       : Identification_Type;
-      Subject_Public_Key_Algorithm  : Algorithm_Identifier;
-      Subject_Public_Key            : Public_Key_Type;
+      Valid_Flag           : Boolean       := False;
+      Cert_Version         : Natural       := 0;
 
-      -------------------------------------------------------------------------
+      --  Name spans (offsets into DER)
+      S_Issuer_CN          : Span;
+      S_Issuer_Org         : Span;
+      S_Issuer_Country     : Span;
+      S_Subject_CN         : Span;
+      S_Subject_Org        : Span;
+      S_Subject_Country    : Span;
+
+      --  Serial number span
+      S_Serial             : Span;
+
+      --  TBS span
+      S_TBS                : Span;
+
+      --  Validity
+      Validity_Not_Before  : Date_Time;
+      Validity_Not_After   : Date_Time;
+
+      --  Public key (copied into local buffer)
+      PK_Algo              : Algorithm_ID  := Algo_Unknown;
+      PK_Buf               : Byte_Seq (0 .. Max_PK_Bytes - 1) := (others => 0);
+      PK_Buf_Len           : N32          := 0;
+      PK_RSA_Exp           : Unsigned_32  := 0;
+
+      --  Signature (copied into local buffer)
+      Sig_Algo             : Algorithm_ID  := Algo_Unknown;
+      Sig_Buf              : Byte_Seq (0 .. Max_Sig_Bytes - 1) := (others => 0);
+      Sig_Buf_Len          : N32          := 0;
+
       --  Extensions
-      -------------------------------------------------------------------------
+      Ext_Is_CA            : Boolean       := False;
+      Ext_Has_Path_Len     : Boolean       := False;
+      Ext_Path_Len         : Natural       := 0;
+      Ext_Key_Usage        : Unsigned_16   := 0;
+      Ext_Has_Key_Usage    : Boolean       := False;
+      Ext_Key_Usage_Crit   : Boolean       := False;
+      Ext_Unknown_Critical : Boolean       := False;
+      Ext_Duplicate        : Boolean       := False;
+      Has_Extensions       : Boolean       := False;
 
-      --  Basic Constraints. If this is a certificate authority (CA),
-      --   then Basic_Constraints = True.
-      --  Path_Len_Constraint is the maximum number of intermediate
-      --   certificates that may follow this in a certification chain.
-      --  If the Path_Len_Constraint is not present, then 
-      --  Path_Len_Constraint_Present = False and no limit is imposed.
-      Basic_Constraints             : Boolean := False;
-      Path_Len_Constraint_Present   : Boolean := False;
-      Path_Len_Constraint           : Integer := 0;
+      --  Second signature algorithm (after TBS, must match first)
+      Sig_Algo_2           : Algorithm_ID  := Algo_Unknown;
+      S_Auth_Key_ID        : Span;
+      S_Subject_Key_ID     : Span;
 
-      --  Subject Key Identifier Extension
-      Subject_Key_Id                : Key_Bytes := (others => 0);
-      Subject_Key_Id_Len            : Natural := 0;
-
-      -- Key Usage Extension
-      Digital_Signature             : Boolean := False;
-      Non_Repudiation               : Boolean := False; -- recent editions of X.509 have renamed this bit to contentCommitment
-      Key_Encipherment              : Boolean := False;
-      Data_Encipherment             : Boolean := False;
-      Key_Agreement                 : Boolean := False;
-      Key_Cert_Sign                 : Boolean := False;
-      CRL_Sign                      : Boolean := False;            
-      Encipher_Only                 : Boolean := False;
-      Decipher_Only                 : Boolean := False;
-
-      -- Key Authority Identifier Extension
-      Key_Identifier                : Key_Bytes := (others => 0);
-      Key_Identifier_Len            : Natural := 0;
-      Authority_Cert_Issuer         : UB_UTF8String.Bounded_String;
-      Authority_Cert_Serial_Number  : Key_Bytes := (others => 0);
-      Authority_Cert_Serial_Len     : Natural := 0;
-
-      -- Subject Alternative Names Extension
-      SAN_DNS_Names                 : SAN_DNS_Array;
-      SAN_DNS_Name_Count            : Natural := 0;
-
-      -- Authority Info Access Extension
-      OCSP                          : UB_UTF8String.Bounded_String;
-      CA_Issuers                    : UB_UTF8String.Bounded_String;
-
-      --  Raw TBS certificate byte range (indices into the Cert_Bytes
-      --  string passed to Parse_Certificate). Used for signature
-      --  verification.
-      TBS_First                     : Natural := 0;
-      TBS_Last                      : Natural := 0;
-
-      --  Signature Algorithm specified again for validation
-      Signature_Algorithm2          : Algorithm_Identifier;
-
-      --  Certificate signature value
-      Signature_Value               : Key_Bytes := (others => 0);
-      Signature_Value_Len           : Natural := 0;
+      --  Subject Alternative Names
+      SANs                 : SAN_Array     := (others => (0, 0, False));
+      SAN_Num              : Natural       := 0;
    end record;
+
 end X509;
