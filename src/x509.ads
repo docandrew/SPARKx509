@@ -240,6 +240,34 @@ is
    function Has_Extensions (Cert : Certificate) return Boolean;
    function Sig_Algorithm_2 (Cert : Certificate) return Algorithm_ID;
    function Is_Key_Usage_Critical (Cert : Certificate) return Boolean;
+   function Is_Basic_Constraints_Critical (Cert : Certificate) return Boolean;
+   function Has_Key_Cert_Sign_Without_CA (Cert : Certificate) return Boolean;
+
+   --  RFC 5280 §4.2: Extension criticality enforcement
+   function Has_Bad_Extension_Criticality (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.1.2.2: Serial number validation
+   function Has_Bad_Serial (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.1.2.5: Time format validation
+   function Has_Bad_Time_Format (Cert : Certificate) return Boolean;
+
+   --  RFC 5280 §4.2.1.6: SAN must not be malformed (empty or blank DNS)
+   function Has_Bad_SAN (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.3: Key Usage must have at least one bit set
+   function Has_Empty_Key_Usage_Value (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.2: CA certs should have Subject Key ID
+   function CA_Missing_Subject_Key_ID (Cert : Certificate) return Boolean;
+
+   --  RFC 5280 §4.1.2.8: uniqueIDs only allowed in v2 and v3
+   function Has_Unique_ID_Version_Error (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.6: SAN must be critical when subject is empty
+   function Has_SAN_Subject_Error (Cert : Certificate) return Boolean;
+
+   --  RFC 5280 §4.2: Extension value content validation
+   function Has_Bad_Ext_Content (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.1: Public key structural validation
+   function Has_Bad_PubKey (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.1: AKID present but missing keyIdentifier
+   function Has_AKID_Missing_Key_ID (Cert : Certificate) return Boolean;
 
    --  Comprehensive structural validation (everything except signature).
    --  The postcondition formally encodes RFC 5280 requirements:
@@ -265,13 +293,39 @@ is
         and (Version (Cert) >= 3 or else not Has_Extensions (Cert))
         --  RFC 5280 4.2: No duplicate extensions
         and not Has_Duplicate_Extension (Cert)
-        --  RFC 5280 4.1.1.2: TBS sig algo must match outer sig algo
-        --  (when both are recognized)
+        --  RFC 5280 4.1.1.2: TBS and outer sig algo must match when both known
         and (Sig_Algorithm_2 (Cert) = Algo_Unknown
              or else Sig_Algorithm (Cert) = Sig_Algorithm_2 (Cert))
         --  RFC 5280 4.2.1.3: Key Usage must be critical when present
         and (not Has_Key_Usage (Cert)
-             or else Is_Key_Usage_Critical (Cert)));
+             or else Is_Key_Usage_Critical (Cert))
+        --  RFC 5280 4.2.1.9: Basic Constraints must be critical for CAs
+        and (not Is_CA (Cert)
+             or else Is_Basic_Constraints_Critical (Cert))
+        --  RFC 5280 4.2.1.3: keyCertSign requires CA
+        and not Has_Key_Cert_Sign_Without_CA (Cert)
+        --  RFC 5280 4.2: Extension criticality enforcement
+        and not Has_Bad_Extension_Criticality (Cert)
+        --  RFC 5280 4.1.2.2: Serial number validation
+        and not Has_Bad_Serial (Cert)
+        --  RFC 5280 4.1.2.5: Time format validation
+        and not Has_Bad_Time_Format (Cert)
+        --  RFC 5280 4.2.1.6: SAN must not be malformed
+        and not Has_Bad_SAN (Cert)
+        --  RFC 5280 4.2.1.3: Key Usage must have at least one bit set
+        and not Has_Empty_Key_Usage_Value (Cert)
+        --  RFC 5280 4.2.1.2: CA certs should have Subject Key ID
+        and not CA_Missing_Subject_Key_ID (Cert)
+        --  RFC 5280 4.1.2.8: uniqueIDs only in v2/v3
+        and not Has_Unique_ID_Version_Error (Cert)
+        --  RFC 5280 4.2.1.6: SAN must be critical if subject empty
+        and not Has_SAN_Subject_Error (Cert)
+        --  RFC 5280 4.2: Extension value must not be empty
+        and not Has_Bad_Ext_Content (Cert)
+        --  RFC 5280 4.2.1.1: Public key must be structurally valid
+        and not Has_Bad_PubKey (Cert)
+        --  RFC 5280 4.2.1.1: AKID must contain keyIdentifier
+        and not Has_AKID_Missing_Key_ID (Cert));
 
 private
 
@@ -317,6 +371,7 @@ private
       Ext_Key_Usage        : Unsigned_16   := 0;
       Ext_Has_Key_Usage    : Boolean       := False;
       Ext_Key_Usage_Crit   : Boolean       := False;
+      Ext_Basic_Crit       : Boolean       := False;
       Ext_Unknown_Critical : Boolean       := False;
       Ext_Duplicate        : Boolean       := False;
       Has_Extensions       : Boolean       := False;
@@ -329,6 +384,19 @@ private
       --  Subject Alternative Names
       SANs                 : SAN_Array     := (others => (0, 0, False));
       SAN_Num              : Natural       := 0;
+
+      --  RFC 5280 validation flags
+      Bad_Ext_Criticality  : Boolean       := False;
+      Bad_Serial           : Boolean       := False;
+      Bad_Time_Format      : Boolean       := False;
+      Bad_SAN              : Boolean       := False;
+      Empty_Key_Usage      : Boolean       := False;
+      Has_Subject          : Boolean       := False;
+      Has_Unique_ID        : Boolean       := False;
+      SAN_Noncrit_Empty_Subj : Boolean     := False;
+      Bad_Ext_Content      : Boolean       := False;
+      Bad_PubKey           : Boolean       := False;
+      AKID_Missing_Key_ID  : Boolean       := False;
    end record;
 
 end X509;

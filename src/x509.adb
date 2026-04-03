@@ -200,6 +200,14 @@ is
    OID_SKID : constant Byte_Seq (0 .. 2) := (16#55#, 16#1D#, 16#0E#);
    --  Authority Key ID: 2.5.29.35
    OID_AKID : constant Byte_Seq (0 .. 2) := (16#55#, 16#1D#, 16#23#);
+   --  InhibitAnyPolicy: 2.5.29.54
+   OID_INHIBIT : constant Byte_Seq (0 .. 2) := (16#55#, 16#1D#, 16#36#);
+   --  NameConstraints: 2.5.29.30
+   OID_NAME_CONS : constant Byte_Seq (0 .. 2) := (16#55#, 16#1D#, 16#1E#);
+   --  PolicyConstraints: 2.5.29.36
+   OID_POLICY_CONS : constant Byte_Seq (0 .. 2) := (16#55#, 16#1D#, 16#24#);
+   --  PolicyMappings: 2.5.29.33
+   OID_POLICY_MAP : constant Byte_Seq (0 .. 2) := (16#55#, 16#1D#, 16#21#);
 
    function OID_Match
      (DER    : Byte_Seq;
@@ -449,7 +457,6 @@ is
       OK   : in out Boolean)
    is
       Y, M, D, Hr, Mn, Sc : Natural := 0;
-      P   : N32 := Pos;
       Bad : Boolean := False;
 
       type Month_Days is array (1 .. 12) of Natural;
@@ -458,32 +465,45 @@ is
    begin
       T := (others => 0);
 
-      if Len < 13 or else not Can_Read (DER, Pos, Len) then
+      if DER'First /= 0 or else (Len < 15 and then Len < 13) then
          OK := False; return;
       end if;
+      if Pos > N32'Last - 15 then
+         OK := False; return;
+      end if;
+      --  Now Pos + 15 won't overflow
+      if Len >= 15 then
+         if Pos + 14 > DER'Last then OK := False; return; end if;
+      else
+         if Pos + 12 > DER'Last then OK := False; return; end if;
+      end if;
+      --  Now: Pos + Len - 1 <= DER'Last, Len >= 13, Off = 0
+      --  So Pos + Off + 12 <= DER'Last throughout
 
       if Len >= 15 then
-         --  GeneralizedTime: YYYYMMDDHHMMSSZ
+         --  GeneralizedTime: YYYYMMDDHHMMSSZ (15 bytes)
          declare
             YH, YL : Natural;
          begin
-            Safe_Two (DER (P), DER (P + 1), YH, Bad);
-            Safe_Two (DER (P + 2), DER (P + 3), YL, Bad);
+            Safe_Two (DER (Pos + 0), DER (Pos + 1), YH, Bad);
+            Safe_Two (DER (Pos + 2), DER (Pos + 3), YL, Bad);
             Y := YH * 100 + YL;
          end;
-         P := P + 4;
+         Safe_Two (DER (Pos + 4),  DER (Pos + 5),  M, Bad);
+         Safe_Two (DER (Pos + 6),  DER (Pos + 7),  D, Bad);
+         Safe_Two (DER (Pos + 8),  DER (Pos + 9),  Hr, Bad);
+         Safe_Two (DER (Pos + 10), DER (Pos + 11), Mn, Bad);
+         Safe_Two (DER (Pos + 12), DER (Pos + 13), Sc, Bad);
       else
-         --  UTCTime: YYMMDDHHMMSSZ
-         Safe_Two (DER (P), DER (P + 1), Y, Bad);
-         P := P + 2;
+         --  UTCTime: YYMMDDHHMMSSZ (13 bytes)
+         Safe_Two (DER (Pos + 0),  DER (Pos + 1),  Y, Bad);
          if Y >= 50 then Y := 1900 + Y; else Y := 2000 + Y; end if;
+         Safe_Two (DER (Pos + 2),  DER (Pos + 3),  M, Bad);
+         Safe_Two (DER (Pos + 4),  DER (Pos + 5),  D, Bad);
+         Safe_Two (DER (Pos + 6),  DER (Pos + 7),  Hr, Bad);
+         Safe_Two (DER (Pos + 8),  DER (Pos + 9),  Mn, Bad);
+         Safe_Two (DER (Pos + 10), DER (Pos + 11), Sc, Bad);
       end if;
-
-      Safe_Two (DER (P), DER (P + 1), M, Bad);  P := P + 2;
-      Safe_Two (DER (P), DER (P + 1), D, Bad);  P := P + 2;
-      Safe_Two (DER (P), DER (P + 1), Hr, Bad); P := P + 2;
-      Safe_Two (DER (P), DER (P + 1), Mn, Bad); P := P + 2;
-      Safe_Two (DER (P), DER (P + 1), Sc, Bad);
 
       Pos := Pos + Len;
 
@@ -524,75 +544,26 @@ is
    end Copy_Bytes;
 
    --================================================================
-   --  Main certificate parser
+   --  Sub-procedures for certificate parsing
    --================================================================
 
-   procedure Parse
-     (DER  : in     Byte_Seq;
-      Cert :    out Certificate;
-      OK   :    out Boolean)
+   --  1. Parse version [0] EXPLICIT + serial INTEGER
+   procedure Parse_Version_Serial
+     (DER   : in     Byte_Seq;
+      Pos   : in out N32;
+      C     : in out Certificate;
+      Valid : in out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
    is
-      Pos      : N32 := 0;
-      Len      : N32;
-      TBS_Start : N32;
-      TBS_Len  : N32;
-      Valid    : Boolean := True;
-      Found    : Boolean;
-
-      --  Fields we'll populate
-      C : Certificate;
+      Len   : N32;
+      Found : Boolean;
    begin
-      --  Initialize
-      C := Certificate'(Valid_Flag          => False,
-                         Cert_Version        => 0,
-                         S_Issuer_CN         => (0, 0, False),
-                         S_Issuer_Org        => (0, 0, False),
-                         S_Issuer_Country    => (0, 0, False),
-                         S_Subject_CN        => (0, 0, False),
-                         S_Subject_Org       => (0, 0, False),
-                         S_Subject_Country   => (0, 0, False),
-                         S_Serial            => (0, 0, False),
-                         S_TBS               => (0, 0, False),
-                         Validity_Not_Before => (others => 0),
-                         Validity_Not_After  => (others => 0),
-                         PK_Algo             => Algo_Unknown,
-                         PK_Buf              => (others => 0),
-                         PK_Buf_Len          => 0,
-                         PK_RSA_Exp          => 0,
-                         Sig_Algo            => Algo_Unknown,
-                         Sig_Buf             => (others => 0),
-                         Sig_Buf_Len         => 0,
-                         Ext_Is_CA           => False,
-                         Ext_Has_Path_Len    => False,
-                         Ext_Path_Len        => 0,
-                         Ext_Key_Usage       => 0,
-                         Ext_Has_Key_Usage   => False,
-                         Ext_Key_Usage_Crit   => False,
-                         Ext_Unknown_Critical => False,
-                         Ext_Duplicate        => False,
-                         Has_Extensions       => False,
-                         Sig_Algo_2           => Algo_Unknown,
-                         S_Auth_Key_ID       => (0, 0, False),
-                         S_Subject_Key_ID    => (0, 0, False),
-                         SANs                => (others => (0, 0, False)),
-                         SAN_Num             => 0);
-
-      --  Outer SEQUENCE (Certificate)
-      if Pos > DER'Last then Cert := C; OK := False; return; end if;
-      Parse_Sequence (DER, Pos, Len, Valid);
-      if not Valid then Cert := C; OK := False; return; end if;
-
-      --  TBS Certificate SEQUENCE
-      TBS_Start := Pos;
-      if Pos > DER'Last then Cert := C; OK := False; return; end if;
-      Parse_Sequence (DER, Pos, TBS_Len, Valid);
-      if not Valid then Cert := C; OK := False; return; end if;
-      C.S_TBS := (First => TBS_Start, Last => Pos + TBS_Len - 1, Present => True);
+      if not Valid then return; end if;
 
       --  Version [0] EXPLICIT (optional, default v1)
       if Pos <= DER'Last then
          Parse_Explicit_Tag (DER, Pos, TAG_VERSION, Len, Found, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
+         if not Valid then return; end if;
          if Found then
             --  INTEGER inside the version tag
             if Pos <= DER'Last and then DER (Pos) = TAG_INTEGER then
@@ -612,588 +583,922 @@ is
 
       --  Serial Number (INTEGER)
       if not Valid or else Pos > DER'Last or else DER (Pos) /= TAG_INTEGER then
-         Cert := C; OK := False; return;
+         Valid := False; return;
       end if;
       declare
          Serial_Start : N32;
       begin
          Pos := Pos + 1;
-         if Pos > DER'Last then Cert := C; OK := False; return; end if;
+         if Pos > DER'Last then Valid := False; return; end if;
          Parse_Length (DER, Pos, Len, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
+         if not Valid then return; end if;
          Serial_Start := Pos;
          C.S_Serial := (First => Serial_Start, Last => Serial_Start + Len - 1,
                          Present => Len > 0);
+
+         --  RFC 5280 §4.1.2.2: Serial must be positive (high bit clear)
+         --  and must not be all zeros.
+         if Len > 0 and then Can_Read (DER, Serial_Start, Len) then
+            --  Negative check: first byte >= 0x80
+            if DER (Serial_Start) >= 16#80# then
+               C.Bad_Serial := True;
+            end if;
+            --  All-zeros check
+            declare
+               All_Zero : Boolean := True;
+            begin
+               for I in N32 range 0 .. Len - 1 loop
+                  pragma Loop_Invariant (Serial_Start + I <= DER'Last);
+                  if DER (Serial_Start + I) /= 0 then
+                     All_Zero := False;
+                  end if;
+               end loop;
+               if All_Zero then
+                  C.Bad_Serial := True;
+               end if;
+            end;
+         end if;
+
          Skip (DER, Pos, Len, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
       end;
+   end Parse_Version_Serial;
 
-      --  Signature Algorithm (SEQUENCE { OID, ... })
-      if Pos > DER'Last then Cert := C; OK := False; return; end if;
-      declare
-         Sig_Seq_Len : N32;
-         Sig_Seq_End : N32;
+   --  2. Parse TBS signature algorithm SEQUENCE { OID, params }
+   procedure Parse_TBS_Sig_Algorithm
+     (DER   : in     Byte_Seq;
+      Pos   : in out N32;
+      C     : in out Certificate;
+      Valid : in out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+   is
+      Sig_Seq_Len : N32;
+      Sig_Seq_End : N32;
+   begin
+      if not Valid then return; end if;
+      if Pos > DER'Last then Valid := False; return; end if;
+      Parse_Sequence (DER, Pos, Sig_Seq_Len, Valid);
+      if not Valid then return; end if;
+      Sig_Seq_End := Pos + Sig_Seq_Len;
+      if Pos <= DER'Last then
+         Parse_Algorithm_OID (DER, Pos, C.Sig_Algo, Valid);
+      end if;
+      Pos := Sig_Seq_End;  --  skip any parameters
+   end Parse_TBS_Sig_Algorithm;
+
+   --  3. Parse Validity SEQUENCE { notBefore, notAfter }
+   procedure Parse_Validity
+     (DER   : in     Byte_Seq;
+      Pos   : in out N32;
+      C     : in out Certificate;
+      Valid : in out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+   is
+      Val_Len : N32;
+      T_Tag   : Byte;
+      T_Len   : N32;
+
+      --  RFC 5280 §4.1.2.5 time format checks on a single time field.
+      procedure Check_Time_Format
+        (Tag     : Byte;
+         T_Start : N32;
+         T_Ln    : N32;
+         DT      : Date_Time)
+      is
       begin
-         Parse_Sequence (DER, Pos, Sig_Seq_Len, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
-         Sig_Seq_End := Pos + Sig_Seq_Len;
-         if Pos <= DER'Last then
-            Parse_Algorithm_OID (DER, Pos, C.Sig_Algo, Valid);
-         end if;
-         Pos := Sig_Seq_End;  --  skip any parameters
-      end;
-
-      --  Issuer (SEQUENCE of RDN SETs)
-      if not Valid or else Pos > DER'Last then Cert := C; OK := False; return; end if;
-      declare
-         Issuer_Len : N32;
-      begin
-         Parse_Sequence (DER, Pos, Issuer_Len, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
-         Parse_Name (DER, Pos, Issuer_Len,
-                     C.S_Issuer_CN, C.S_Issuer_Org, C.S_Issuer_Country, Valid);
-      end;
-
-      --  Validity (SEQUENCE { notBefore, notAfter })
-      if not Valid or else Pos > DER'Last then Cert := C; OK := False; return; end if;
-      declare
-         Val_Len : N32;
-         T_Tag   : Byte;
-         T_Len   : N32;
-      begin
-         Parse_Sequence (DER, Pos, Val_Len, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
-
-         --  notBefore
-         if Pos <= DER'Last then
-            T_Tag := DER (Pos);
-            if T_Tag = TAG_UTCTIME or T_Tag = TAG_GENTIME then
-               Pos := Pos + 1;
-               if Pos <= DER'Last then
-                  Parse_Length (DER, Pos, T_Len, Valid);
-                  if Valid then
-                     Parse_Time_Value (DER, Pos, T_Len, C.Validity_Not_Before, Valid);
-                  end if;
-               end if;
-            end if;
-         end if;
-
-         --  notAfter
-         if Valid and then Pos <= DER'Last then
-            T_Tag := DER (Pos);
-            if T_Tag = TAG_UTCTIME or T_Tag = TAG_GENTIME then
-               Pos := Pos + 1;
-               if Pos <= DER'Last then
-                  Parse_Length (DER, Pos, T_Len, Valid);
-                  if Valid then
-                     Parse_Time_Value (DER, Pos, T_Len, C.Validity_Not_After, Valid);
-                  end if;
-               end if;
-            end if;
-         end if;
-      end;
-
-      --  Subject (SEQUENCE of RDN SETs)
-      if not Valid or else Pos > DER'Last then Cert := C; OK := False; return; end if;
-      declare
-         Subject_Len : N32;
-      begin
-         Parse_Sequence (DER, Pos, Subject_Len, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
-         Parse_Name (DER, Pos, Subject_Len,
-                     C.S_Subject_CN, C.S_Subject_Org, C.S_Subject_Country, Valid);
-      end;
-
-      --  SubjectPublicKeyInfo (SEQUENCE { algorithm, publicKey })
-      if not Valid or else Pos > DER'Last then Cert := C; OK := False; return; end if;
-      declare
-         SPKI_Len    : N32;
-         SPKI_End    : N32;
-         Algo_Len    : N32;
-         Algo_End    : N32;
-         PK_Algo_ID  : Algorithm_ID := Algo_Unknown;
-         Curve_Algo  : Algorithm_ID := Algo_Unknown;
-         BStr_Len    : N32;
-         Unused_Bits : Byte;
-      begin
-         Parse_Sequence (DER, Pos, SPKI_Len, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
-         SPKI_End := Pos + SPKI_Len;
-
-         --  Algorithm SEQUENCE { OID [, parameters] }
-         if Pos > DER'Last then Cert := C; OK := False; return; end if;
-         Parse_Sequence (DER, Pos, Algo_Len, Valid);
-         if not Valid then Cert := C; OK := False; return; end if;
-         Algo_End := Pos + Algo_Len;
-         if Pos <= DER'Last then
-            Parse_Algorithm_OID (DER, Pos, PK_Algo_ID, Valid);
-         end if;
-
-         --  For EC keys, the curve OID follows
-         if Valid and then PK_Algo_ID = Algo_Unknown and then Pos < Algo_End
-            and then Pos <= DER'Last and then DER (Pos) = TAG_OID
+         if T_Ln = 0 or else DER'First /= 0
+            or else T_Start > DER'Last
+            or else DER'Last - T_Start < T_Ln - 1
          then
-            Parse_Algorithm_OID (DER, Pos, Curve_Algo, Valid);
-            if Curve_Algo in Algo_EC_P256 | Algo_EC_P384 then
-               PK_Algo_ID := Curve_Algo;
+            return;
+         end if;
+         --  Now: T_Start + T_Ln - 1 <= DER'Last
+         --  Must end in 'Z' (0x5A)
+         if DER (T_Start + T_Ln - 1) /= 16#5A# then
+            C.Bad_Time_Format := True;
+         end if;
+         --  GeneralizedTime must NOT have fractional seconds ('.' = 0x2E)
+         if Tag = TAG_GENTIME and then T_Ln > 14 then
+            for I in N32 range 14 .. T_Ln - 1 loop
+               pragma Loop_Invariant (T_Start + I <= DER'Last);
+               if DER (T_Start + I) = 16#2E# then
+                  C.Bad_Time_Format := True;
+               end if;
+            end loop;
+         end if;
+         --  Dates with year >= 2050 must use GeneralizedTime
+         if Tag = TAG_UTCTIME and then DT.Year >= 2050 then
+            C.Bad_Time_Format := True;
+         end if;
+      end Check_Time_Format;
+
+   begin
+      if not Valid then return; end if;
+      if Pos > DER'Last then Valid := False; return; end if;
+
+      Parse_Sequence (DER, Pos, Val_Len, Valid);
+      if not Valid then return; end if;
+
+      --  notBefore
+      if Pos <= DER'Last then
+         T_Tag := DER (Pos);
+         if T_Tag = TAG_UTCTIME or T_Tag = TAG_GENTIME then
+            Pos := Pos + 1;
+            if Pos <= DER'Last then
+               Parse_Length (DER, Pos, T_Len, Valid);
+               if Valid then
+                  declare
+                     Time_Start : constant N32 := Pos;
+                     Time_Len   : constant N32 := T_Len;
+                     Saved_Tag  : constant Byte := T_Tag;
+                  begin
+                     Parse_Time_Value (DER, Pos, T_Len,
+                                       C.Validity_Not_Before, Valid);
+                     if Valid then
+                        Check_Time_Format (Saved_Tag, Time_Start,
+                                           Time_Len,
+                                           C.Validity_Not_Before);
+                     end if;
+                  end;
+               end if;
             end if;
          end if;
+      end if;
 
-         C.PK_Algo := PK_Algo_ID;
-         Pos := Algo_End;
-
-         --  Public key BIT STRING
-         if not Valid or else Pos > DER'Last or else DER (Pos) /= TAG_BITSTRING then
-            Cert := C; OK := False; return;
-         end if;
-         Pos := Pos + 1;
-         if Pos > DER'Last then Cert := C; OK := False; return; end if;
-         Parse_Length (DER, Pos, BStr_Len, Valid);
-         if not Valid or BStr_Len < 2 then Cert := C; OK := False; return; end if;
-         if Pos > DER'Last then Cert := C; OK := False; return; end if;
-         Unused_Bits := DER (Pos);
-         Pos := Pos + 1;
-         BStr_Len := BStr_Len - 1;  --  subtract unused bits byte
-
-         if PK_Algo_ID = Algo_RSA then
-            --  RSA key: BIT STRING contains SEQUENCE { modulus INTEGER, exponent INTEGER }
-            if Pos <= DER'Last and then DER (Pos) = TAG_SEQUENCE then
-               declare
-                  RSA_Len : N32;
-                  Mod_Len : N32;
-                  Exp_Len : N32;
-               begin
-                  Parse_Sequence (DER, Pos, RSA_Len, Valid);
-                  if Valid and then Pos <= DER'Last and then DER (Pos) = TAG_INTEGER then
-                     Pos := Pos + 1;
-                     if Pos <= DER'Last then
-                        Parse_Length (DER, Pos, Mod_Len, Valid);
-                        if Valid then
-                           --  Skip leading zero byte if present
-                           if Mod_Len > 0 and then Pos <= DER'Last
-                              and then DER (Pos) = 0
-                           then
-                              Pos := Pos + 1;
-                              Mod_Len := Mod_Len - 1;
-                           end if;
-                           Copy_Bytes (DER, Pos, Mod_Len, C.PK_Buf, C.PK_Buf_Len);
-                           Skip (DER, Pos, Mod_Len, Valid);
-                        end if;
+      --  notAfter
+      if Valid and then Pos <= DER'Last then
+         T_Tag := DER (Pos);
+         if T_Tag = TAG_UTCTIME or T_Tag = TAG_GENTIME then
+            Pos := Pos + 1;
+            if Pos <= DER'Last then
+               Parse_Length (DER, Pos, T_Len, Valid);
+               if Valid then
+                  declare
+                     Time_Start : constant N32 := Pos;
+                     Time_Len   : constant N32 := T_Len;
+                     Saved_Tag  : constant Byte := T_Tag;
+                  begin
+                     Parse_Time_Value (DER, Pos, T_Len,
+                                       C.Validity_Not_After, Valid);
+                     if Valid then
+                        Check_Time_Format (Saved_Tag, Time_Start,
+                                           Time_Len,
+                                           C.Validity_Not_After);
                      end if;
-                  end if;
-                  --  Exponent INTEGER
-                  if Valid and then Pos <= DER'Last and then DER (Pos) = TAG_INTEGER then
-                     Pos := Pos + 1;
-                     if Pos <= DER'Last then
-                        Parse_Length (DER, Pos, Exp_Len, Valid);
-                        if Valid and then Exp_Len > 0
-                           and then Can_Read (DER, Pos, Exp_Len)
+                  end;
+               end if;
+            end if;
+         end if;
+      end if;
+   end Parse_Validity;
+
+   --  4. Parse SubjectPublicKeyInfo SEQUENCE { algorithm, publicKey }
+   procedure Parse_SPKI
+     (DER   : in     Byte_Seq;
+      Pos   : in out N32;
+      C     : in out Certificate;
+      Valid : in out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+   is
+      SPKI_Len    : N32;
+      SPKI_End    : N32;
+      Algo_Len    : N32;
+      Algo_End    : N32;
+      PK_Algo_ID  : Algorithm_ID := Algo_Unknown;
+      Curve_Algo  : Algorithm_ID := Algo_Unknown;
+      BStr_Len    : N32;
+      Unused_Bits : Byte;
+   begin
+      if not Valid then return; end if;
+      if Pos > DER'Last then Valid := False; return; end if;
+
+      Parse_Sequence (DER, Pos, SPKI_Len, Valid);
+      if not Valid then return; end if;
+      SPKI_End := Pos + SPKI_Len;
+
+      --  Algorithm SEQUENCE { OID [, parameters] }
+      if Pos > DER'Last then Valid := False; return; end if;
+      Parse_Sequence (DER, Pos, Algo_Len, Valid);
+      if not Valid then return; end if;
+      Algo_End := Pos + Algo_Len;
+      if Pos <= DER'Last then
+         Parse_Algorithm_OID (DER, Pos, PK_Algo_ID, Valid);
+      end if;
+
+      --  For EC keys, the curve OID follows
+      if Valid and then PK_Algo_ID = Algo_Unknown and then Pos < Algo_End
+         and then Pos <= DER'Last and then DER (Pos) = TAG_OID
+      then
+         Parse_Algorithm_OID (DER, Pos, Curve_Algo, Valid);
+         if Curve_Algo in Algo_EC_P256 | Algo_EC_P384 then
+            PK_Algo_ID := Curve_Algo;
+         end if;
+      end if;
+
+      --  RFC 5280: RSA AlgorithmIdentifier parameters must be NULL
+      if Valid and then PK_Algo_ID = Algo_RSA
+         and then Pos < Algo_End
+         and then Pos + 1 <= DER'Last
+      then
+         if DER (Pos) /= TAG_NULL
+            or else DER (Pos + 1) /= 16#00#
+         then
+            C.Bad_PubKey := True;
+         end if;
+      end if;
+
+      C.PK_Algo := PK_Algo_ID;
+      Pos := Algo_End;
+
+      --  Public key BIT STRING
+      if not Valid or else Pos > DER'Last or else DER (Pos) /= TAG_BITSTRING then
+         Valid := False; return;
+      end if;
+      Pos := Pos + 1;
+      if Pos > DER'Last then Valid := False; return; end if;
+      Parse_Length (DER, Pos, BStr_Len, Valid);
+      if not Valid or BStr_Len < 2 then Valid := False; return; end if;
+      if Pos > DER'Last then Valid := False; return; end if;
+      Unused_Bits := DER (Pos);
+      Pos := Pos + 1;
+      BStr_Len := BStr_Len - 1;  --  subtract unused bits byte
+
+      if PK_Algo_ID = Algo_RSA then
+         --  RSA key: BIT STRING contains SEQUENCE { modulus INTEGER, exponent INTEGER }
+         if Pos <= DER'Last and then DER (Pos) = TAG_SEQUENCE then
+            declare
+               RSA_Len : N32;
+               Mod_Len : N32;
+               Exp_Len : N32;
+            begin
+               Parse_Sequence (DER, Pos, RSA_Len, Valid);
+               if Valid and then Pos <= DER'Last and then DER (Pos) = TAG_INTEGER then
+                  Pos := Pos + 1;
+                  if Pos <= DER'Last then
+                     Parse_Length (DER, Pos, Mod_Len, Valid);
+                     if Valid then
+                        --  Skip leading zero byte if present
+                        if Mod_Len > 0 and then Pos <= DER'Last
+                           and then DER (Pos) = 0
                         then
-                           pragma Assert (Pos + Exp_Len - 1 <= DER'Last);
-                           C.PK_RSA_Exp := 0;
-                           declare
-                              Limit : constant N32 := N32'Min (Exp_Len, 4);
-                           begin
-                              pragma Assert (Limit <= Exp_Len);
-                              pragma Assert (Limit >= 1);
-                              for I in N32 range 0 .. Limit - 1 loop
-                                 pragma Loop_Invariant
-                                   (Pos + Exp_Len - 1 <= DER'Last
-                                    and then I <= Limit - 1
-                                    and then Limit <= Exp_Len);
-                                 pragma Assert (I < Exp_Len);
-                                 pragma Assert (Pos + I <= Pos + Exp_Len - 1);
-                                 C.PK_RSA_Exp := C.PK_RSA_Exp * 256 +
-                                                 Unsigned_32 (DER (Pos + I));
-                              end loop;
-                           end;
-                           Skip (DER, Pos, Exp_Len, Valid);
+                           Pos := Pos + 1;
+                           Mod_Len := Mod_Len - 1;
                         end if;
+                        Copy_Bytes (DER, Pos, Mod_Len, C.PK_Buf, C.PK_Buf_Len);
+                        --  RFC 5280: RSA modulus must be positive
+                        if C.PK_Buf_Len > 0
+                           and then C.PK_Buf (0) >= 16#80#
+                        then
+                           C.Bad_PubKey := True;
+                        end if;
+                        Skip (DER, Pos, Mod_Len, Valid);
                      end if;
                   end if;
-               end;
-            else
-               Skip (DER, Pos, BStr_Len, Valid);
-            end if;
+               end if;
+               --  Exponent INTEGER
+               if Valid and then Pos <= DER'Last and then DER (Pos) = TAG_INTEGER then
+                  Pos := Pos + 1;
+                  if Pos <= DER'Last then
+                     Parse_Length (DER, Pos, Exp_Len, Valid);
+                     if Valid and then Exp_Len > 0
+                        and then Can_Read (DER, Pos, Exp_Len)
+                     then
+                        pragma Assert (Pos + Exp_Len - 1 <= DER'Last);
+                        C.PK_RSA_Exp := 0;
+                        declare
+                           Limit : constant N32 := N32'Min (Exp_Len, 4);
+                        begin
+                           pragma Assert (Limit <= Exp_Len);
+                           pragma Assert (Limit >= 1);
+                           for I in N32 range 0 .. Limit - 1 loop
+                              pragma Loop_Invariant
+                                (Pos + Exp_Len - 1 <= DER'Last
+                                 and then I <= Limit - 1
+                                 and then Limit <= Exp_Len);
+                              pragma Assert (I < Exp_Len);
+                              pragma Assert (Pos + I <= Pos + Exp_Len - 1);
+                              C.PK_RSA_Exp := C.PK_RSA_Exp * 256 +
+                                              Unsigned_32 (DER (Pos + I));
+                           end loop;
+                        end;
+                        Skip (DER, Pos, Exp_Len, Valid);
+                     end if;
+                  end if;
+               end if;
+            end;
          else
-            --  EC / Ed25519: raw key bytes in BIT STRING
-            Copy_Bytes (DER, Pos, BStr_Len, C.PK_Buf, C.PK_Buf_Len);
             Skip (DER, Pos, BStr_Len, Valid);
          end if;
+      else
+         --  EC / Ed25519: raw key bytes in BIT STRING
+         Copy_Bytes (DER, Pos, BStr_Len, C.PK_Buf, C.PK_Buf_Len);
+         Skip (DER, Pos, BStr_Len, Valid);
+      end if;
 
-         Pos := SPKI_End;
-      end;
+      Pos := SPKI_End;
+   end Parse_SPKI;
 
-      --  Extensions [3] EXPLICIT (optional, v3 only)
-      if Valid and then Pos <= DER'Last and then C.S_TBS.Present
+   --  5. Parse optional issuerUniqueID [1], subjectUniqueID [2]
+   procedure Parse_Unique_IDs
+     (DER   : in     Byte_Seq;
+      Pos   : in out N32;
+      C     : in out Certificate;
+      Valid : in out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+   is
+   begin
+      if not Valid then return; end if;
+
+      --  issuerUniqueID [1] IMPLICIT BIT STRING OPTIONAL
+      --  subjectUniqueID [2] IMPLICIT BIT STRING OPTIONAL
+      --  RFC 5280 §4.1.2.8: only allowed in v2 and v3
+      if Pos <= DER'Last and then C.S_TBS.Present
          and then Pos <= C.S_TBS.Last
       then
-         declare
-            Ext_Tag_Len  : N32;
-            Ext_Found    : Boolean;
-            Exts_Seq_Len : N32;
-            Exts_End     : N32;
-            Ext_Seq_Len  : N32;
-            Ext_Seq_End  : N32;
-            OID_Len      : N32;
-            OID_Start    : N32;
-            Val_Len      : N32;
-            Inner_Len    : N32;
-            Inner_End    : N32;
-            --  Duplicate extension tracking
-            Seen_SAN   : Boolean := False;
-            Seen_Basic : Boolean := False;
-            Seen_KU    : Boolean := False;
-            Seen_SKID  : Boolean := False;
-            Seen_AKID  : Boolean := False;
-         begin
-            Parse_Explicit_Tag (DER, Pos, TAG_EXTENSIONS, Ext_Tag_Len,
-                                Ext_Found, Valid);
-            if Valid and then Ext_Found then
-               C.Has_Extensions := True;
-               --  Outer SEQUENCE of extensions
-               if Pos <= DER'Last then
-                  Parse_Sequence (DER, Pos, Exts_Seq_Len, Valid);
-                  if Valid then
-                     if Can_Read (DER, Pos, Exts_Seq_Len) then
-                        Exts_End := Pos + Exts_Seq_Len;
-                     else
-                        Exts_End := Pos;
-                        Valid := False;
-                     end if;
+         --  issuerUniqueID: tag 0xA1 (constructed) or 0x81 (primitive)
+         if Pos <= DER'Last and then
+            (DER (Pos) = 16#A1# or DER (Pos) = 16#81#)
+         then
+            C.Has_Unique_ID := True;
+            Skip_TLV (DER, Pos, Valid);
+         end if;
+         --  subjectUniqueID: tag 0xA2 (constructed) or 0x82 (primitive)
+         if Valid and then Pos <= DER'Last
+            and then Pos <= C.S_TBS.Last
+            and then (DER (Pos) = 16#A2# or DER (Pos) = 16#82#)
+         then
+            C.Has_Unique_ID := True;
+            Skip_TLV (DER, Pos, Valid);
+         end if;
+      end if;
+   end Parse_Unique_IDs;
 
-                     --  Loop through each Extension SEQUENCE
-                     while Valid and then Pos < Exts_End
-                           and then Pos <= DER'Last
-                     loop
-                        if DER (Pos) /= TAG_SEQUENCE then
-                           --  Skip unexpected content to end
-                           Pos := Exts_End;
-                           exit;
+   --  6. Parse [3] EXPLICIT SEQUENCE of extensions
+   procedure Parse_Extensions
+     (DER   : in     Byte_Seq;
+      Pos   : in out N32;
+      C     : in out Certificate;
+      Valid : in out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+   is
+      Ext_Tag_Len  : N32;
+      Ext_Found    : Boolean;
+      Exts_Seq_Len : N32;
+      Exts_End     : N32;
+      Ext_Seq_Len  : N32;
+      Ext_Seq_End  : N32;
+      OID_Len      : N32;
+      OID_Start    : N32;
+      Val_Len      : N32;
+      Inner_Len    : N32;
+      Inner_End    : N32;
+      --  Duplicate extension tracking
+      Seen_SAN   : Boolean := False;
+      Seen_Basic : Boolean := False;
+      Seen_KU    : Boolean := False;
+      Seen_SKID  : Boolean := False;
+      Seen_AKID  : Boolean := False;
+   begin
+      if not Valid then return; end if;
+      if not (Pos <= DER'Last and then C.S_TBS.Present
+              and then Pos <= C.S_TBS.Last)
+      then
+         return;
+      end if;
+
+      Parse_Explicit_Tag (DER, Pos, TAG_EXTENSIONS, Ext_Tag_Len,
+                           Ext_Found, Valid);
+      if not (Valid and then Ext_Found) then return; end if;
+
+      C.Has_Extensions := True;
+      --  Outer SEQUENCE of extensions
+      if Pos > DER'Last then return; end if;
+      Parse_Sequence (DER, Pos, Exts_Seq_Len, Valid);
+      if not Valid then return; end if;
+
+      if Can_Read (DER, Pos, Exts_Seq_Len) then
+         Exts_End := Pos + Exts_Seq_Len;
+      else
+         Exts_End := Pos;
+         Valid := False;
+         return;
+      end if;
+
+      --  Loop through each Extension SEQUENCE
+      while Valid and then Pos < Exts_End
+            and then Pos <= DER'Last
+      loop
+         if DER (Pos) /= TAG_SEQUENCE then
+            --  Skip unexpected content to end
+            Pos := Exts_End;
+            exit;
+         end if;
+         Parse_Sequence (DER, Pos, Ext_Seq_Len, Valid);
+         if not Valid then exit; end if;
+         if not Can_Read (DER, Pos, Ext_Seq_Len) then
+            Valid := False; exit;
+         end if;
+         Ext_Seq_End := Pos + Ext_Seq_Len;
+
+         --  OID
+         if Pos > DER'Last or else DER (Pos) /= TAG_OID then
+            Pos := Ext_Seq_End;
+         else
+            Pos := Pos + 1;
+            if Pos > DER'Last then Valid := False; exit; end if;
+            Parse_Length (DER, Pos, OID_Len, Valid);
+            if not Valid then exit; end if;
+            OID_Start := Pos;
+            Skip (DER, Pos, OID_Len, Valid);
+            if not Valid then exit; end if;
+
+            --  Optional critical BOOLEAN
+            declare
+               Is_Critical : Boolean := False;
+            begin
+            if Pos < Ext_Seq_End and then Pos <= DER'Last
+               and then DER (Pos) = TAG_BOOLEAN
+            then
+               --  Parse boolean: tag(1) + len(1) + value(1)
+               if Can_Read (DER, Pos, 3) then
+                  Is_Critical := DER (Pos + 2) /= 0;
+               end if;
+               Skip_TLV (DER, Pos, Valid);
+               if not Valid then exit; end if;
+            end if;
+
+            --  OCTET STRING wrapping the extension value
+            if Pos < Ext_Seq_End and then Pos <= DER'Last
+               and then DER (Pos) = TAG_OCTETSTRING
+            then
+               Pos := Pos + 1;
+               if Pos > DER'Last then Valid := False; exit; end if;
+               Parse_Length (DER, Pos, Val_Len, Valid);
+               if not Valid then exit; end if;
+
+               --  RFC 5280: extension value must not be empty
+               if Val_Len = 0 then
+                  C.Bad_Ext_Content := True;
+               end if;
+
+               --  Now dispatch based on the OID
+               if OID_Match (DER, OID_Start, OID_Len, OID_SAN)
+               then
+                  if Seen_SAN then
+                     C.Ext_Duplicate := True;
+                  end if;
+                  Seen_SAN := True;
+                  --  SAN noncrit + empty subject check
+                  if not Is_Critical
+                     and then not C.Has_Subject
+                  then
+                     C.SAN_Noncrit_Empty_Subj := True;
+                  end if;
+                  --  SAN: SEQUENCE of GeneralName
+                  if Pos <= DER'Last
+                     and then DER (Pos) = TAG_SEQUENCE
+                  then
+                     Parse_Sequence (DER, Pos, Inner_Len, Valid);
+                     if Valid and then
+                        Can_Read (DER, Pos, Inner_Len)
+                     then
+                        Inner_End := Pos + Inner_Len;
+                        --  RFC 5280 4.2.1.6: empty SAN
+                        if Inner_Len = 0 then
+                           C.Bad_SAN := True;
                         end if;
-                        Parse_Sequence (DER, Pos, Ext_Seq_Len, Valid);
-                        if not Valid then exit; end if;
-                        if not Can_Read (DER, Pos, Ext_Seq_Len) then
-                           Valid := False; exit;
-                        end if;
-                        Ext_Seq_End := Pos + Ext_Seq_Len;
-
-                        --  OID
-                        if Pos > DER'Last or else DER (Pos) /= TAG_OID then
-                           Pos := Ext_Seq_End;
-                        else
-                           Pos := Pos + 1;
-                           if Pos > DER'Last then Valid := False; exit; end if;
-                           Parse_Length (DER, Pos, OID_Len, Valid);
-                           if not Valid then exit; end if;
-                           OID_Start := Pos;
-                           Skip (DER, Pos, OID_Len, Valid);
-                           if not Valid then exit; end if;
-
-                           --  Optional critical BOOLEAN
+                        declare
+                           Saw_DNS  : Boolean := False;
+                           Saw_Other : Boolean := False;
+                        begin
+                        while Valid and then Pos < Inner_End
+                              and then Pos <= DER'Last
+                        loop
                            declare
-                              Is_Critical : Boolean := False;
+                              GN_Tag : constant Byte :=
+                                 DER (Pos);
+                              GN_Len : N32;
                            begin
-                           if Pos < Ext_Seq_End and then Pos <= DER'Last
-                              and then DER (Pos) = TAG_BOOLEAN
-                           then
-                              --  Parse boolean: tag(1) + len(1) + value(1)
-                              if Can_Read (DER, Pos, 3) then
-                                 Is_Critical := DER (Pos + 2) /= 0;
-                              end if;
-                              Skip_TLV (DER, Pos, Valid);
-                              if not Valid then exit; end if;
-                           end if;
-
-                           --  OCTET STRING wrapping the extension value
-                           if Pos < Ext_Seq_End and then Pos <= DER'Last
-                              and then DER (Pos) = TAG_OCTETSTRING
-                           then
                               Pos := Pos + 1;
-                              if Pos > DER'Last then Valid := False; exit; end if;
-                              Parse_Length (DER, Pos, Val_Len, Valid);
+                              if Pos > DER'Last then
+                                 Valid := False; exit;
+                              end if;
+                              Parse_Length
+                                (DER, Pos, GN_Len, Valid);
                               if not Valid then exit; end if;
 
-                              --  Now dispatch based on the OID
-                              if OID_Match (DER, OID_Start, OID_Len, OID_SAN)
-                              then
-                                 if Seen_SAN then
-                                    C.Ext_Duplicate := True;
-                                 end if;
-                                 Seen_SAN := True;
-                                 --  SAN: SEQUENCE of GeneralName
-                                 if Pos <= DER'Last
-                                    and then DER (Pos) = TAG_SEQUENCE
+                              --  Tag 0x82 = dNSName (context
+                              --  tag 2, primitive)
+                              if GN_Tag = 16#82# then
+                                 Saw_DNS := True;
+                                 if GN_Len = 0 then
+                                    --  Blank DNS name
+                                    C.Bad_SAN := True;
+                                 elsif Can_Read
+                                    (DER, Pos, GN_Len)
                                  then
-                                    Parse_Sequence (DER, Pos, Inner_Len, Valid);
-                                    if Valid and then
-                                       Can_Read (DER, Pos, Inner_Len)
+                                    --  Validate DNS chars
+                                    for J in N32 range
+                                       0 .. GN_Len - 1
+                                    loop
+                                       pragma Loop_Invariant
+                                         (Pos + J <= DER'Last);
+                                       declare
+                                          Ch : constant Byte :=
+                                            DER (Pos + J);
+                                       begin
+                                          if not (Ch in
+                                             16#61# .. 16#7A#  --  a-z
+                                           | 16#41# .. 16#5A#  --  A-Z
+                                           | 16#30# .. 16#39#  --  0-9
+                                           | 16#2D#            --  '-'
+                                           | 16#2E#            --  '.'
+                                           | 16#2A#)           --  '*'
+                                          then
+                                             C.Bad_SAN := True;
+                                          end if;
+                                       end;
+                                    end loop;
+                                    if C.SAN_Num < Max_SANs
                                     then
-                                       Inner_End := Pos + Inner_Len;
-                                       while Valid and then Pos < Inner_End
-                                             and then Pos <= DER'Last
+                                       C.SAN_Num :=
+                                          C.SAN_Num + 1;
+                                       C.SANs (C.SAN_Num) :=
+                                         (First   => Pos,
+                                          Last    =>
+                                             Pos + GN_Len - 1,
+                                          Present => True);
+                                    end if;
+                                 end if;
+
+                              elsif GN_Tag = 16#81# then
+                                 --  rfc822Name (email)
+                                 Saw_Other := True;
+                                 if GN_Len > 0
+                                    and then Can_Read
+                                       (DER, Pos, GN_Len)
+                                 then
+                                    declare
+                                       Has_At : Boolean :=
+                                         False;
+                                    begin
+                                       for J in N32 range
+                                          0 .. GN_Len - 1
                                        loop
-                                          declare
-                                             GN_Tag : constant Byte :=
-                                                DER (Pos);
-                                             GN_Len : N32;
-                                          begin
-                                             Pos := Pos + 1;
-                                             if Pos > DER'Last then
-                                                Valid := False; exit;
-                                             end if;
-                                             Parse_Length
-                                               (DER, Pos, GN_Len, Valid);
-                                             if not Valid then exit; end if;
-
-                                             --  Tag 0x82 = dNSName (context
-                                             --  tag 2, primitive)
-                                             if GN_Tag = 16#82#
-                                                and then GN_Len > 0
-                                                and then Can_Read
-                                                   (DER, Pos, GN_Len)
-                                                and then C.SAN_Num < Max_SANs
-                                             then
-                                                C.SAN_Num := C.SAN_Num + 1;
-                                                C.SANs (C.SAN_Num) :=
-                                                  (First   => Pos,
-                                                   Last    => Pos + GN_Len - 1,
-                                                   Present => True);
-                                             end if;
-
-                                             Skip (DER, Pos, GN_Len, Valid);
-                                          end;
+                                          pragma Loop_Invariant
+                                            (Pos + J <=
+                                               DER'Last);
+                                          if DER (Pos + J) =
+                                             16#40#
+                                          then
+                                             Has_At := True;
+                                          end if;
                                        end loop;
-                                    end if;
+                                       if not Has_At then
+                                          C.Bad_SAN := True;
+                                       end if;
+                                    end;
                                  end if;
 
-                              elsif OID_Match
-                                 (DER, OID_Start, OID_Len, OID_BASIC)
-                              then
-                                 if Seen_Basic then
-                                    C.Ext_Duplicate := True;
-                                 end if;
-                                 Seen_Basic := True;
-                                 --  Basic Constraints: SEQUENCE {
-                                 --    BOOLEAN (isCA)?, INTEGER (pathLen)? }
-                                 if Pos <= DER'Last
-                                    and then DER (Pos) = TAG_SEQUENCE
+                              elsif GN_Tag = 16#86# then
+                                 --  uniformResourceIdentifier
+                                 Saw_Other := True;
+                                 if GN_Len > 0
+                                    and then Can_Read
+                                       (DER, Pos, GN_Len)
                                  then
-                                    Parse_Sequence (DER, Pos, Inner_Len, Valid);
-                                    if Valid and then Inner_Len > 0
-                                       and then Can_Read (DER, Pos, Inner_Len)
-                                    then
-                                       Inner_End := Pos + Inner_Len;
-                                       --  Optional isCA BOOLEAN
-                                       if Pos < Inner_End
+                                    --  Check for "://" scheme
+                                    declare
+                                       Has_Scheme : Boolean :=
+                                         False;
+                                    begin
+                                       if GN_Len >= 3
                                           and then Pos <= DER'Last
-                                          and then DER (Pos) = TAG_BOOLEAN
+                                          and then DER'Last - Pos >= GN_Len - 1
                                        then
-                                          Pos := Pos + 1;
-                                          if Pos > DER'Last then
-                                             Valid := False;
-                                          else
-                                             declare
-                                                B_Len : N32;
-                                             begin
-                                                Parse_Length
-                                                  (DER, Pos, B_Len, Valid);
-                                                if Valid and then B_Len = 1
-                                                   and then Pos <= DER'Last
-                                                then
-                                                   C.Ext_Is_CA :=
-                                                     DER (Pos) /= 0;
-                                                   Pos := Pos + 1;
-                                                elsif Valid then
-                                                   Skip
-                                                     (DER, Pos, B_Len, Valid);
-                                                end if;
-                                             end;
-                                          end if;
-                                       end if;
-                                       --  Optional pathLen INTEGER
-                                       if Valid and then Pos < Inner_End
-                                          and then Pos <= DER'Last
-                                          and then DER (Pos) = TAG_INTEGER
-                                       then
-                                          Pos := Pos + 1;
-                                          if Pos <= DER'Last then
-                                             declare
-                                                PL_Len : N32;
-                                             begin
-                                                Parse_Length
-                                                  (DER, Pos, PL_Len, Valid);
-                                                if Valid and then PL_Len >= 1
-                                                   and then Pos <= DER'Last
-                                                then
-                                                   C.Ext_Has_Path_Len := True;
-                                                   C.Ext_Path_Len :=
-                                                     Natural (DER (Pos));
-                                                   Skip
-                                                     (DER, Pos, PL_Len, Valid);
-                                                end if;
-                                             end;
-                                          end if;
-                                       end if;
-                                    end if;
-                                 end if;
-
-                              elsif OID_Match
-                                 (DER, OID_Start, OID_Len, OID_KEY_USAGE)
-                              then
-                                 if Seen_KU then
-                                    C.Ext_Duplicate := True;
-                                 end if;
-                                 Seen_KU := True;
-                                 C.Ext_Key_Usage_Crit := Is_Critical;
-                                 --  Key Usage: BIT STRING
-                                 if Pos <= DER'Last
-                                    and then DER (Pos) = TAG_BITSTRING
-                                 then
-                                    Pos := Pos + 1;
-                                    if Pos > DER'Last then
-                                       Valid := False;
-                                    else
-                                       declare
-                                          BS_Len      : N32;
-                                          Unused_Bits : Byte;
-                                       begin
-                                          Parse_Length
-                                            (DER, Pos, BS_Len, Valid);
-                                          if Valid and then BS_Len >= 2
-                                             and then Pos <= DER'Last
-                                             and then Can_Read
-                                                (DER, Pos, BS_Len)
-                                          then
-                                             Unused_Bits := DER (Pos);
-                                             Pos := Pos + 1;
-                                             BS_Len := BS_Len - 1;
-                                             C.Ext_Has_Key_Usage := True;
-                                             --  First byte of key usage bits
-                                             if Pos <= DER'Last then
-                                                C.Ext_Key_Usage :=
-                                                  Unsigned_16 (DER (Pos))
-                                                  * 256;
-                                                if BS_Len >= 2
-                                                   and then Pos + 1 <=
-                                                      DER'Last
-                                                then
-                                                   C.Ext_Key_Usage :=
-                                                     C.Ext_Key_Usage or
-                                                     Unsigned_16
-                                                       (DER (Pos + 1));
-                                                end if;
+                                          for J in N32 range
+                                             0 .. GN_Len - 3
+                                          loop
+                                             pragma
+                                               Loop_Invariant
+                                                 (Pos + J + 2
+                                                    <= DER'Last);
+                                             if DER (Pos + J)
+                                                  = 16#3A#
+                                                and then
+                                                DER (Pos + J + 1)
+                                                  = 16#2F#
+                                                and then
+                                                DER (Pos + J + 2)
+                                                  = 16#2F#
+                                             then
+                                                Has_Scheme :=
+                                                  True;
                                              end if;
-                                          end if;
-                                       end;
-                                    end if;
-                                 end if;
-
-                              elsif OID_Match
-                                 (DER, OID_Start, OID_Len, OID_SKID)
-                              then
-                                 if Seen_SKID then
-                                    C.Ext_Duplicate := True;
-                                 end if;
-                                 Seen_SKID := True;
-                                 --  Subject Key ID: OCTET STRING
-                                 if Pos <= DER'Last
-                                    and then DER (Pos) = TAG_OCTETSTRING
-                                 then
-                                    Pos := Pos + 1;
-                                    if Pos > DER'Last then
-                                       Valid := False;
-                                    else
-                                       declare
-                                          SK_Len : N32;
-                                       begin
-                                          Parse_Length
-                                            (DER, Pos, SK_Len, Valid);
-                                          if Valid and then SK_Len > 0
-                                             and then Can_Read
-                                                (DER, Pos, SK_Len)
-                                          then
-                                             C.S_Subject_Key_ID :=
-                                               (First   => Pos,
-                                                Last    => Pos + SK_Len - 1,
-                                                Present => True);
-                                          end if;
-                                       end;
-                                    end if;
-                                 end if;
-
-                              elsif OID_Match
-                                 (DER, OID_Start, OID_Len, OID_AKID)
-                              then
-                                 if Seen_AKID then
-                                    C.Ext_Duplicate := True;
-                                 end if;
-                                 Seen_AKID := True;
-                                 --  Authority Key ID: SEQUENCE {
-                                 --    [0] keyIdentifier IMPLICIT OCTET STRING
-                                 --    ... }
-                                 if Pos <= DER'Last
-                                    and then DER (Pos) = TAG_SEQUENCE
-                                 then
-                                    Parse_Sequence (DER, Pos, Inner_Len, Valid);
-                                    if Valid and then Inner_Len > 0
-                                       and then Can_Read (DER, Pos, Inner_Len)
-                                    then
-                                       --  Look for [0] tag (0x80)
-                                       if Pos <= DER'Last
-                                          and then DER (Pos) = 16#80#
-                                       then
-                                          Pos := Pos + 1;
-                                          if Pos > DER'Last then
-                                             Valid := False;
-                                          else
-                                             declare
-                                                AK_Len : N32;
-                                             begin
-                                                Parse_Length
-                                                  (DER, Pos, AK_Len, Valid);
-                                                if Valid and then AK_Len > 0
-                                                   and then Can_Read
-                                                      (DER, Pos, AK_Len)
-                                                then
-                                                   C.S_Auth_Key_ID :=
-                                                     (First   => Pos,
-                                                      Last    =>
-                                                        Pos + AK_Len - 1,
-                                                      Present => True);
-                                                end if;
-                                             end;
-                                          end if;
+                                          end loop;
                                        end if;
-                                    end if;
+                                       if not Has_Scheme then
+                                          C.Bad_SAN := True;
+                                       end if;
+                                    end;
                                  end if;
+
+                              elsif GN_Tag = 16#87# then
+                                 --  iPAddress
+                                 Saw_Other := True;
+                                 if GN_Len /= 4
+                                    and then GN_Len /= 16
+                                 then
+                                    C.Bad_SAN := True;
+                                 end if;
+
+                              elsif GN_Tag in
+                                 16#80# | 16#83# | 16#84#
+                                 | 16#85# | 16#88#
+                              then
+                                 --  Other known tags
+                                 Saw_Other := True;
 
                               else
-                                 --  Unknown extension
-                                 if Is_Critical then
-                                    C.Ext_Unknown_Critical := True;
+                                 --  Unrecognized SAN tag
+                                 C.Bad_SAN := True;
+                              end if;
+
+                              Skip (DER, Pos, GN_Len, Valid);
+                           end;
+                        end loop;
+                        --  SAN with entries but no dNSName
+                        --  (only email-only or similar)
+                        if Inner_Len > 0
+                           and then not Saw_DNS
+                           and then Saw_Other
+                        then
+                           C.Bad_SAN := True;
+                        end if;
+                        end;
+                     end if;
+                  end if;
+
+               elsif OID_Match
+                  (DER, OID_Start, OID_Len, OID_BASIC)
+               then
+                  if Seen_Basic then
+                     C.Ext_Duplicate := True;
+                  end if;
+                  Seen_Basic := True;
+                  C.Ext_Basic_Crit := Is_Critical;
+                  --  Basic Constraints: SEQUENCE {
+                  --    BOOLEAN (isCA)?, INTEGER (pathLen)? }
+                  if Pos <= DER'Last
+                     and then DER (Pos) = TAG_SEQUENCE
+                  then
+                     Parse_Sequence (DER, Pos, Inner_Len, Valid);
+                     if Valid and then Inner_Len > 0
+                        and then Can_Read (DER, Pos, Inner_Len)
+                     then
+                        Inner_End := Pos + Inner_Len;
+                        --  Optional isCA BOOLEAN
+                        if Pos < Inner_End
+                           and then Pos <= DER'Last
+                           and then DER (Pos) = TAG_BOOLEAN
+                        then
+                           Pos := Pos + 1;
+                           if Pos > DER'Last then
+                              Valid := False;
+                           else
+                              declare
+                                 B_Len : N32;
+                              begin
+                                 Parse_Length
+                                   (DER, Pos, B_Len, Valid);
+                                 if Valid and then B_Len = 1
+                                    and then Pos <= DER'Last
+                                 then
+                                    C.Ext_Is_CA :=
+                                      DER (Pos) /= 0;
+                                    Pos := Pos + 1;
+                                 elsif Valid then
+                                    Skip
+                                      (DER, Pos, B_Len, Valid);
+                                 end if;
+                              end;
+                           end if;
+                        end if;
+                        --  Optional pathLen INTEGER
+                        if Valid and then Pos < Inner_End
+                           and then Pos <= DER'Last
+                           and then DER (Pos) = TAG_INTEGER
+                        then
+                           Pos := Pos + 1;
+                           if Pos <= DER'Last then
+                              declare
+                                 PL_Len : N32;
+                              begin
+                                 Parse_Length
+                                   (DER, Pos, PL_Len, Valid);
+                                 if Valid and then PL_Len >= 1
+                                    and then Pos <= DER'Last
+                                 then
+                                    C.Ext_Has_Path_Len := True;
+                                    C.Ext_Path_Len :=
+                                      Natural (DER (Pos));
+                                    Skip
+                                      (DER, Pos, PL_Len, Valid);
+                                 end if;
+                              end;
+                           end if;
+                        end if;
+                     end if;
+                  end if;
+
+               elsif OID_Match
+                  (DER, OID_Start, OID_Len, OID_KEY_USAGE)
+               then
+                  if Seen_KU then
+                     C.Ext_Duplicate := True;
+                  end if;
+                  Seen_KU := True;
+                  C.Ext_Key_Usage_Crit := Is_Critical;
+                  --  Key Usage: BIT STRING
+                  if Pos <= DER'Last
+                     and then DER (Pos) = TAG_BITSTRING
+                  then
+                     Pos := Pos + 1;
+                     if Pos > DER'Last then
+                        Valid := False;
+                     else
+                        declare
+                           BS_Len      : N32;
+                           Unused_Bits : Byte;
+                        begin
+                           Parse_Length
+                             (DER, Pos, BS_Len, Valid);
+                           if Valid and then BS_Len >= 2
+                              and then Pos <= DER'Last
+                              and then Can_Read
+                                 (DER, Pos, BS_Len)
+                           then
+                              Unused_Bits := DER (Pos);
+                              Pos := Pos + 1;
+                              BS_Len := BS_Len - 1;
+                              C.Ext_Has_Key_Usage := True;
+                              --  First byte of key usage bits
+                              if Pos <= DER'Last then
+                                 C.Ext_Key_Usage :=
+                                   Unsigned_16 (DER (Pos))
+                                   * 256;
+                                 if BS_Len >= 2
+                                    and then Pos + 1 <=
+                                       DER'Last
+                                 then
+                                    C.Ext_Key_Usage :=
+                                      C.Ext_Key_Usage or
+                                      Unsigned_16
+                                        (DER (Pos + 1));
                                  end if;
                               end if;
+                              --  RFC 5280 4.2.1.3: KU with
+                              --  no bits set is invalid
+                              if C.Ext_Key_Usage = 0 then
+                                 C.Empty_Key_Usage := True;
+                              end if;
                            end if;
-                           end;  --  Is_Critical declare block
+                        end;
+                     end if;
+                  end if;
 
-                           --  Advance to next extension regardless
-                           Pos := Ext_Seq_End;
+               elsif OID_Match
+                  (DER, OID_Start, OID_Len, OID_SKID)
+               then
+                  if Seen_SKID then
+                     C.Ext_Duplicate := True;
+                  end if;
+                  Seen_SKID := True;
+                  --  RFC 5280: SKID MUST NOT be critical
+                  if Is_Critical then
+                     C.Bad_Ext_Criticality := True;
+                  end if;
+                  --  Subject Key ID: OCTET STRING
+                  if Pos <= DER'Last
+                     and then DER (Pos) = TAG_OCTETSTRING
+                  then
+                     Pos := Pos + 1;
+                     if Pos > DER'Last then
+                        Valid := False;
+                     else
+                        declare
+                           SK_Len : N32;
+                        begin
+                           Parse_Length
+                             (DER, Pos, SK_Len, Valid);
+                           if Valid and then SK_Len > 0
+                              and then Can_Read
+                                 (DER, Pos, SK_Len)
+                           then
+                              C.S_Subject_Key_ID :=
+                                (First   => Pos,
+                                 Last    => Pos + SK_Len - 1,
+                                 Present => True);
+                           end if;
+                        end;
+                     end if;
+                  end if;
+
+               elsif OID_Match
+                  (DER, OID_Start, OID_Len, OID_AKID)
+               then
+                  if Seen_AKID then
+                     C.Ext_Duplicate := True;
+                  end if;
+                  Seen_AKID := True;
+                  --  RFC 5280: AKID MUST NOT be critical
+                  if Is_Critical then
+                     C.Bad_Ext_Criticality := True;
+                  end if;
+                  --  Authority Key ID: SEQUENCE {
+                  --    [0] keyIdentifier IMPLICIT OCTET STRING
+                  --    ... }
+                  if Pos <= DER'Last
+                     and then DER (Pos) = TAG_SEQUENCE
+                  then
+                     Parse_Sequence (DER, Pos, Inner_Len, Valid);
+                     if Valid and then Inner_Len > 0
+                        and then Can_Read (DER, Pos, Inner_Len)
+                     then
+                        --  Look for [0] tag (0x80)
+                        if Pos <= DER'Last
+                           and then DER (Pos) = 16#80#
+                        then
+                           Pos := Pos + 1;
+                           if Pos > DER'Last then
+                              Valid := False;
+                           else
+                              declare
+                                 AK_Len : N32;
+                              begin
+                                 Parse_Length
+                                   (DER, Pos, AK_Len, Valid);
+                                 if Valid and then AK_Len > 0
+                                    and then Can_Read
+                                       (DER, Pos, AK_Len)
+                                 then
+                                    C.S_Auth_Key_ID :=
+                                      (First   => Pos,
+                                       Last    =>
+                                         Pos + AK_Len - 1,
+                                       Present => True);
+                                 end if;
+                              end;
+                           end if;
+                        else
+                           --  RFC 5280 4.2.1.1: AKID without
+                           --  keyIdentifier
+                           C.AKID_Missing_Key_ID := True;
                         end if;
-                     end loop;
+                     end if;
+                  end if;
+
+               elsif OID_Match
+                  (DER, OID_Start, OID_Len, OID_INHIBIT)
+                  or else OID_Match
+                  (DER, OID_Start, OID_Len, OID_NAME_CONS)
+                  or else OID_Match
+                  (DER, OID_Start, OID_Len, OID_POLICY_CONS)
+                  or else OID_Match
+                  (DER, OID_Start, OID_Len, OID_POLICY_MAP)
+               then
+                  --  RFC 5280: these MUST be critical
+                  if not Is_Critical then
+                     C.Bad_Ext_Criticality := True;
+                  end if;
+
+               else
+                  --  Unknown extension
+                  if Is_Critical then
+                     C.Ext_Unknown_Critical := True;
                   end if;
                end if;
             end if;
-         end;
-      end if;
+            end;  --  Is_Critical declare block
 
-      --  Skip any remaining TBS bytes (e.g. issuerUniqueID, subjectUniqueID)
-      if C.S_TBS.Present and then Pos <= C.S_TBS.Last then
-         Pos := C.S_TBS.Last + 1;
-      end if;
+            --  Advance to next extension regardless
+            Pos := Ext_Seq_End;
+         end if;
+      end loop;
+   end Parse_Extensions;
+
+   --  7. Parse outer signature algorithm SEQUENCE + signature BIT STRING
+   procedure Parse_Outer_Sig_And_Value
+     (DER   : in     Byte_Seq;
+      Pos   : in out N32;
+      C     : in out Certificate;
+      Valid : in out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+   is
+   begin
+      if not Valid then return; end if;
 
       --  Signature Algorithm (again, should match first one)
-      if Valid and then Pos <= DER'Last then
+      if Pos <= DER'Last then
          declare
             SA2_Len : N32;
             SA2_End : N32;
@@ -1229,6 +1534,137 @@ is
             end if;
          end;
       end if;
+   end Parse_Outer_Sig_And_Value;
+
+   --================================================================
+   --  Main certificate parser (thin orchestrator)
+   --================================================================
+
+   procedure Parse
+     (DER  : in     Byte_Seq;
+      Cert :    out Certificate;
+      OK   :    out Boolean)
+   is
+      Pos       : N32 := 0;
+      Len       : N32;
+      TBS_Start : N32;
+      TBS_Len   : N32;
+      Valid     : Boolean := True;
+
+      --  Fields we'll populate
+      C : Certificate;
+   begin
+      --  Initialize
+      C := Certificate'(Valid_Flag          => False,
+                         Cert_Version        => 0,
+                         S_Issuer_CN         => (0, 0, False),
+                         S_Issuer_Org        => (0, 0, False),
+                         S_Issuer_Country    => (0, 0, False),
+                         S_Subject_CN        => (0, 0, False),
+                         S_Subject_Org       => (0, 0, False),
+                         S_Subject_Country   => (0, 0, False),
+                         S_Serial            => (0, 0, False),
+                         S_TBS               => (0, 0, False),
+                         Validity_Not_Before => (others => 0),
+                         Validity_Not_After  => (others => 0),
+                         PK_Algo             => Algo_Unknown,
+                         PK_Buf              => (others => 0),
+                         PK_Buf_Len          => 0,
+                         PK_RSA_Exp          => 0,
+                         Sig_Algo            => Algo_Unknown,
+                         Sig_Buf             => (others => 0),
+                         Sig_Buf_Len         => 0,
+                         Ext_Is_CA           => False,
+                         Ext_Has_Path_Len    => False,
+                         Ext_Path_Len        => 0,
+                         Ext_Key_Usage       => 0,
+                         Ext_Has_Key_Usage   => False,
+                         Ext_Key_Usage_Crit   => False,
+                         Ext_Basic_Crit       => False,
+                         Ext_Unknown_Critical => False,
+                         Ext_Duplicate        => False,
+                         Has_Extensions       => False,
+                         Sig_Algo_2           => Algo_Unknown,
+                         S_Auth_Key_ID       => (0, 0, False),
+                         S_Subject_Key_ID    => (0, 0, False),
+                         SANs                => (others => (0, 0, False)),
+                         SAN_Num             => 0,
+                         Bad_Ext_Criticality => False,
+                         Bad_Serial          => False,
+                         Bad_Time_Format     => False,
+                         Bad_SAN             => False,
+                         Empty_Key_Usage     => False,
+                         Has_Subject         => False,
+                         Has_Unique_ID       => False,
+                         SAN_Noncrit_Empty_Subj => False,
+                         Bad_Ext_Content     => False,
+                         Bad_PubKey          => False,
+                         AKID_Missing_Key_ID => False);
+
+      --  Outer SEQUENCE (Certificate)
+      if Pos > DER'Last then Cert := C; OK := False; return; end if;
+      Parse_Sequence (DER, Pos, Len, Valid);
+      if not Valid then Cert := C; OK := False; return; end if;
+
+      --  TBS Certificate SEQUENCE
+      TBS_Start := Pos;
+      if Pos > DER'Last then Cert := C; OK := False; return; end if;
+      Parse_Sequence (DER, Pos, TBS_Len, Valid);
+      if not Valid then Cert := C; OK := False; return; end if;
+      C.S_TBS := (First => TBS_Start, Last => Pos + TBS_Len - 1, Present => True);
+
+      --  Version + Serial
+      Parse_Version_Serial (DER, Pos, C, Valid);
+      if not Valid then Cert := C; OK := False; return; end if;
+
+      --  TBS Signature Algorithm
+      Parse_TBS_Sig_Algorithm (DER, Pos, C, Valid);
+      if not Valid then Cert := C; OK := False; return; end if;
+
+      --  Issuer (SEQUENCE of RDN SETs)
+      if Pos > DER'Last then Cert := C; OK := False; return; end if;
+      declare
+         Issuer_Len : N32;
+      begin
+         Parse_Sequence (DER, Pos, Issuer_Len, Valid);
+         if not Valid then Cert := C; OK := False; return; end if;
+         Parse_Name (DER, Pos, Issuer_Len,
+                     C.S_Issuer_CN, C.S_Issuer_Org, C.S_Issuer_Country, Valid);
+      end;
+
+      --  Validity
+      Parse_Validity (DER, Pos, C, Valid);
+      if not Valid then Cert := C; OK := False; return; end if;
+
+      --  Subject (SEQUENCE of RDN SETs)
+      if Pos > DER'Last then Cert := C; OK := False; return; end if;
+      declare
+         Subject_Len : N32;
+      begin
+         Parse_Sequence (DER, Pos, Subject_Len, Valid);
+         if not Valid then Cert := C; OK := False; return; end if;
+         C.Has_Subject := (Subject_Len > 0);
+         Parse_Name (DER, Pos, Subject_Len,
+                     C.S_Subject_CN, C.S_Subject_Org, C.S_Subject_Country, Valid);
+      end;
+
+      --  SubjectPublicKeyInfo
+      Parse_SPKI (DER, Pos, C, Valid);
+      if not Valid then Cert := C; OK := False; return; end if;
+
+      --  Optional Unique IDs
+      Parse_Unique_IDs (DER, Pos, C, Valid);
+
+      --  Extensions
+      Parse_Extensions (DER, Pos, C, Valid);
+
+      --  Skip any remaining TBS bytes
+      if Valid and then C.S_TBS.Present and then Pos <= C.S_TBS.Last then
+         Pos := C.S_TBS.Last + 1;
+      end if;
+
+      --  Outer Signature Algorithm + Signature Value
+      Parse_Outer_Sig_And_Value (DER, Pos, C, Valid);
 
       C.Valid_Flag := Valid;
       Cert := C;
@@ -1465,6 +1901,47 @@ is
    function Is_Key_Usage_Critical (Cert : Certificate) return Boolean is
      (Cert.Ext_Key_Usage_Crit);
 
+   function Is_Basic_Constraints_Critical (Cert : Certificate) return Boolean is
+     (Cert.Ext_Basic_Crit);
+
+   function Has_Key_Cert_Sign_Without_CA (Cert : Certificate) return Boolean is
+     (Cert.Ext_Has_Key_Usage
+      and then (Cert.Ext_Key_Usage and 16#0400#) /= 0
+      and then not Cert.Ext_Is_CA);
+
+   function Has_Bad_Extension_Criticality (Cert : Certificate) return Boolean is
+     (Cert.Bad_Ext_Criticality);
+
+   function Has_Bad_Serial (Cert : Certificate) return Boolean is
+     (Cert.Bad_Serial);
+
+   function Has_Bad_Time_Format (Cert : Certificate) return Boolean is
+     (Cert.Bad_Time_Format);
+
+   function Has_Bad_SAN (Cert : Certificate) return Boolean is
+     (Cert.Bad_SAN);
+
+   function Has_Empty_Key_Usage_Value (Cert : Certificate) return Boolean is
+     (Cert.Ext_Has_Key_Usage and then Cert.Empty_Key_Usage);
+
+   function CA_Missing_Subject_Key_ID (Cert : Certificate) return Boolean is
+     (Cert.Ext_Is_CA and then not Cert.S_Subject_Key_ID.Present);
+
+   function Has_Unique_ID_Version_Error (Cert : Certificate) return Boolean is
+     (Cert.Has_Unique_ID and then Cert.Cert_Version < 2);
+
+   function Has_SAN_Subject_Error (Cert : Certificate) return Boolean is
+     (Cert.SAN_Noncrit_Empty_Subj);
+
+   function Has_Bad_Ext_Content (Cert : Certificate) return Boolean is
+     (Cert.Bad_Ext_Content);
+
+   function Has_Bad_PubKey (Cert : Certificate) return Boolean is
+     (Cert.Bad_PubKey);
+
+   function Has_AKID_Missing_Key_ID (Cert : Certificate) return Boolean is
+     (Cert.AKID_Missing_Key_ID);
+
    function Is_Structurally_Valid
      (Cert : Certificate;
       Now  : Date_Time) return Boolean
@@ -1512,16 +1989,80 @@ is
       end if;
 
       --  Signature algorithm mismatch (RFC 5280 Section 4.1.1.2)
-      --  The algorithm in TBS must match the outer algorithm
-      if Cert.Sig_Algo /= Algo_Unknown and then
-         Cert.Sig_Algo_2 /= Algo_Unknown and then
-         Cert.Sig_Algo /= Cert.Sig_Algo_2
+      --  If both are recognized, they must match
+      if Cert.Sig_Algo_2 /= Algo_Unknown
+         and then Cert.Sig_Algo /= Cert.Sig_Algo_2
       then
          return False;
       end if;
 
       --  Key Usage must be critical when present (RFC 5280 Section 4.2.1.3)
       if Cert.Ext_Has_Key_Usage and then not Cert.Ext_Key_Usage_Crit then
+         return False;
+      end if;
+
+      --  Basic Constraints must be critical for CAs (RFC 5280 Section 4.2.1.9)
+      if Cert.Ext_Is_CA and then not Cert.Ext_Basic_Crit then
+         return False;
+      end if;
+
+      --  keyCertSign in Key Usage requires CA (RFC 5280 Section 4.2.1.3)
+      if Has_Key_Cert_Sign_Without_CA (Cert) then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2: Extension criticality enforcement
+      if Cert.Bad_Ext_Criticality then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.1.2.2: Serial number validation
+      if Cert.Bad_Serial then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.1.2.5: Time format validation
+      if Cert.Bad_Time_Format then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2.1.6: SAN must not be malformed
+      if Cert.Bad_SAN then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2.1.3: Key Usage must have at least one bit set
+      if Cert.Ext_Has_Key_Usage and then Cert.Empty_Key_Usage then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2.1.2: CA certs should have Subject Key ID
+      if Cert.Ext_Is_CA and then not Cert.S_Subject_Key_ID.Present then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.1.2.8: uniqueIDs only in v2 and v3
+      if Has_Unique_ID_Version_Error (Cert) then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2.1.6: SAN must be critical if subject is empty
+      if Has_SAN_Subject_Error (Cert) then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2: Extension value must not be empty
+      if Cert.Bad_Ext_Content then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2.1.1: Public key must be structurally valid
+      if Cert.Bad_PubKey then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2.1.1: AKID must contain keyIdentifier
+      if Cert.AKID_Missing_Key_ID then
          return False;
       end if;
 
