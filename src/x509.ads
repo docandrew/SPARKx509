@@ -233,6 +233,39 @@ is
       Hostname : String) return Boolean
    with Pre => DER'First = 0 and DER'Last < N32'Last;
 
+   --================================================================
+   --  Chain validation (structural checks between issuer and subject)
+   --================================================================
+
+   --  Check if Issuer_DER's subject DN matches Cert_DER's issuer DN.
+   --  Both DER buffers needed to resolve the Span offsets.
+   function Issuer_Matches
+     (Cert      : Certificate;
+      Cert_DER  : Byte_Seq;
+      Issuer    : Certificate;
+      Issuer_DER : Byte_Seq) return Boolean
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+               and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last;
+
+   --  Check if the issuer's Key Usage allows cert signing.
+   --  RFC 5280 §4.2.1.3: keyCertSign bit must be set.
+   function Issuer_May_Sign (Issuer : Certificate) return Boolean;
+
+   --  Check if the cert satisfies the issuer's name constraints.
+   --  Returns True if no name constraints or all constraints satisfied.
+   --  Needs both DER buffers to compare DNS names.
+   function Satisfies_Name_Constraints
+     (Cert       : Certificate;
+      Cert_DER   : Byte_Seq;
+      Issuer     : Certificate;
+      Issuer_DER : Byte_Seq) return Boolean
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+               and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last;
+
+   --================================================================
+   --  Structural validation getters
+   --================================================================
+
    --  True if the cert contains a critical extension we don't understand.
    --  RFC 5280: MUST reject certs with unrecognized critical extensions.
    function Has_Unknown_Critical_Extension (Cert : Certificate) return Boolean;
@@ -268,6 +301,29 @@ is
    function Has_Bad_PubKey (Cert : Certificate) return Boolean;
    --  RFC 5280 §4.2.1.1: AKID present but missing keyIdentifier
    function Has_AKID_Missing_Key_ID (Cert : Certificate) return Boolean;
+
+   --  RFC 5280 §4.2.1.10: NameConstraints on a non-CA cert
+   function Has_Name_Constraints_NonCA (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.14: InhibitAnyPolicy with negative value
+   function Has_Bad_Inhibit_Value (Cert : Certificate) return Boolean;
+
+   --  RFC 5280 Appendix A / X.690: DER encoding violations
+   function Has_Bad_DER (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.4: Certificate policies validation
+   function Has_Bad_Cert_Policy (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.1: AKID issuer/serial both-or-neither
+   function Has_Bad_AKID (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.1.2.6: Subject encoding (no T61String, valid PrintableString)
+   function Has_Bad_Subject_Encoding (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.12: EKU valid OIDs
+   function Has_Bad_EKU_Content (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.13: CRL DP not reasons-only
+   function Has_Bad_CRL_DP (Cert : Certificate) return Boolean;
+
+   --  RFC 5280 §4.2.1.6: SAN critical with non-empty subject
+   function Has_SAN_Critical_With_Subject (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.1.2.1: v3 UniqueID present but no extensions
+   function Has_V3_UniqueID_NoExts (Cert : Certificate) return Boolean;
 
    --  Comprehensive structural validation (everything except signature).
    --  The postcondition formally encodes RFC 5280 requirements:
@@ -325,7 +381,27 @@ is
         --  RFC 5280 4.2.1.1: Public key must be structurally valid
         and not Has_Bad_PubKey (Cert)
         --  RFC 5280 4.2.1.1: AKID must contain keyIdentifier
-        and not Has_AKID_Missing_Key_ID (Cert));
+        and not Has_AKID_Missing_Key_ID (Cert)
+        --  RFC 5280 4.2.1.10: NameConstraints only on CA certs
+        and not Has_Name_Constraints_NonCA (Cert)
+        --  RFC 5280 4.2.1.14: InhibitAnyPolicy must not be negative
+        and not Has_Bad_Inhibit_Value (Cert)
+        --  RFC 5280 Appendix A / X.690: Valid DER encoding
+        and not Has_Bad_DER (Cert)
+        --  RFC 5280 4.2.1.4: Certificate policies
+        and not Has_Bad_Cert_Policy (Cert)
+        --  RFC 5280 4.2.1.1: AuthKeyID issuer/serial both or neither
+        and not Has_Bad_AKID (Cert)
+        --  RFC 5280 4.1.2.6: Subject encoding (no T61String, PrintableString valid)
+        and not Has_Bad_Subject_Encoding (Cert)
+        --  RFC 5280 4.2.1.12: EKU valid OIDs
+        and not Has_Bad_EKU_Content (Cert)
+        --  RFC 5280 4.2.1.13: CRL DP not reasons-only
+        and not Has_Bad_CRL_DP (Cert)
+        --  RFC 5280 4.2.1.6: SAN critical with non-empty subject
+        and not Has_SAN_Critical_With_Subject (Cert)
+        --  RFC 5280 4.1.2.1: v3 UniqueID without extensions
+        and not Has_V3_UniqueID_NoExts (Cert));
 
 private
 
@@ -397,6 +473,16 @@ private
       Bad_Ext_Content      : Boolean       := False;
       Bad_PubKey           : Boolean       := False;
       AKID_Missing_Key_ID  : Boolean       := False;
+      Has_Name_Constraints : Boolean       := False;
+      Bad_Inhibit_Value    : Boolean       := False;
+      Bad_DER              : Boolean       := False;
+      Bad_Cert_Policy      : Boolean       := False;
+      Bad_AKID             : Boolean       := False;
+      Bad_Subject_Encoding : Boolean       := False;
+      Bad_EKU_Content      : Boolean       := False;
+      Bad_CRL_DP           : Boolean       := False;
+      SAN_Critical_With_Subject : Boolean  := False;
+      V3_UniqueID_NoExts   : Boolean       := False;
    end record;
 
 end X509;
