@@ -2569,10 +2569,8 @@ is
                elsif OID_Match
                   (DER, OID_Start, OID_Len, OID_POLICY_CONS)
                then
-                  --  RFC 5280: MUST be critical
-                  if not Is_Critical then
-                     C.Bad_Ext_Criticality := True;
-                  end if;
+                  --  Note: RFC 5280 says MUST be critical (issuance req).
+                  --  We don't reject non-critical — PKITS tests 43/44/46.
                   --  RFC 5280 §4.2.1.11: MUST NOT be empty sequence
                   if Val_Len = 2
                      and then Pos <= DER'Last
@@ -2589,10 +2587,8 @@ is
                elsif OID_Match
                   (DER, OID_Start, OID_Len, OID_POLICY_MAP)
                then
-                  --  RFC 5280: MUST be critical
-                  if not Is_Critical then
-                     C.Bad_Ext_Criticality := True;
-                  end if;
+                  --  Note: RFC 5280 says MUST be critical (issuance req).
+                  null;
 
                elsif OID_Match
                   (DER, OID_Start, OID_Len, OID_CERT_POLICIES)
@@ -3278,15 +3274,16 @@ is
          return False;
       end if;
 
-      --  Key Usage must be critical when present (RFC 5280 Section 4.2.1.3)
-      if Cert.Ext_Has_Key_Usage and then not Cert.Ext_Key_Usage_Crit then
-         return False;
-      end if;
+      --  Note: RFC 5280 §4.2.1.3 says conforming CAs MUST mark KU critical,
+      --  but X.509 §8.2.2.3 says if non-critical and recognized, the
+      --  validator SHALL still enforce the bits.  We enforce the bits
+      --  (keyCertSign check below) but don't reject non-critical KU.
+      --  PKITS tests 30, 33 confirm non-critical KU should be accepted.
 
-      --  Basic Constraints must be critical for CAs (RFC 5280 Section 4.2.1.9)
-      if Cert.Ext_Is_CA and then not Cert.Ext_Basic_Crit then
-         return False;
-      end if;
+      --  Note: RFC 5280 §4.2.1.9 says conforming CAs MUST mark BC critical,
+      --  but this is a CA issuance requirement, not a validator requirement.
+      --  X.509 §8.4.2.1: if BC is present with cA=true, treat as CA
+      --  regardless of criticality.  PKITS test 26 confirms this.
 
       --  RFC 5280 §4.2.1.9: pathLen only when cA is TRUE
       if Cert.Ext_Has_Path_Len and then not Cert.Ext_Is_CA then
@@ -3425,34 +3422,373 @@ is
    is
       Cert_Issuer : constant Span := Cert.S_Issuer_Raw;
       Issuer_Subj : constant Span := Issuer.S_Subject_Raw;
-      Len         : N32;
-   begin
+
+      --  RFC 5280 §7.1: case fold a single byte (A-Z -> a-z)
+      function To_Lower (B : Byte) return Byte is
+        (if B in 16#41# .. 16#5A# then B + 16#20# else B);
+
+      --  RFC 5280 §7.1: Compare two string values with normalization.
+      --  - Case-insensitive for PrintableString (tag 0x13) and
+      --    UTF8String (tag 0x0C)
+      --  - Collapse internal whitespace runs to single space
+      --  - Strip leading and trailing whitespace
+      --  Returns True if values are equal after normalization.
+      function Normalized_String_Equal
+        (D1 : Byte_Seq; S1 : N32; L1 : N32;
+         D2 : Byte_Seq; S2 : N32; L2 : N32) return Boolean
+      with Pre => D1'First = 0 and D1'Last < N32'Last
+                  and D2'First = 0 and D2'Last < N32'Last
+                  and Can_Read (D1, S1, L1)
+                  and Can_Read (D2, S2, L2)
+      is
+         P1 : N32 := S1;
+         P2 : N32 := S2;
+         E1 : constant N32 := S1 + L1;
+         E2 : constant N32 := S2 + L2;
+         C1, C2 : Byte;
+
+         --  Skip whitespace (0x20, 0x09)
+         procedure Skip_WS (D : Byte_Seq; P : in out N32; E : N32)
+         with Pre => D'First = 0 and D'Last < N32'Last
+                     and E <= D'Last + 1
+         is
+         begin
+            while P < E and then P <= D'Last
+                  and then (D (P) = 16#20# or D (P) = 16#09#)
+            loop
+               pragma Loop_Invariant (P >= D'First and P < E);
+               pragma Loop_Variant (Decreases => E - P);
+               P := P + 1;
+            end loop;
+         end Skip_WS;
+
+         --  Advance past a whitespace run, consuming exactly one
+         --  logical space. Returns False if no WS to consume.
+         procedure Consume_WS
+           (D     : Byte_Seq;
+            P     : in out N32;
+            E     : N32;
+            Found : out Boolean)
+         with Pre => D'First = 0 and D'Last < N32'Last
+                     and E <= D'Last + 1
+         is
+         begin
+            Found := False;
+            if P < E and then P <= D'Last
+               and then (D (P) = 16#20# or D (P) = 16#09#)
+            then
+               Found := True;
+               while P < E and then P <= D'Last
+                     and then (D (P) = 16#20# or D (P) = 16#09#)
+               loop
+                  pragma Loop_Invariant (P >= D'First and P < E);
+                  pragma Loop_Variant (Decreases => E - P);
+                  P := P + 1;
+               end loop;
+            end if;
+         end Consume_WS;
+
+         WS1, WS2 : Boolean;
+         Fuel : N32;
+      begin
+         --  Strip leading whitespace
+         Skip_WS (D1, P1, E1);
+         Skip_WS (D2, P2, E2);
+         Fuel := L1 + L2;
+
+         --  Compare character by character with normalization
+         while P1 < E1 and then P2 < E2 loop
+            pragma Loop_Variant (Decreases => Fuel);
+            pragma Loop_Invariant
+              (P1 >= D1'First and P2 >= D2'First);
+            --  Strip trailing whitespace (check if remaining is all WS)
+            declare
+               T1 : N32 := P1;
+               T2 : N32 := P2;
+            begin
+               Skip_WS (D1, T1, E1);
+               Skip_WS (D2, T2, E2);
+               --  Both at end after stripping trailing WS?
+               if T1 >= E1 and T2 >= E2 then
+                  return True;
+               end if;
+               --  One at end but not the other?
+               if T1 >= E1 or T2 >= E2 then
+                  return False;
+               end if;
+            end;
+
+            --  Both have non-WS content remaining
+            if P1 >= E1 or P2 >= E2
+               or P1 > D1'Last or P2 > D2'Last
+            then
+               return P1 >= E1 and P2 >= E2;
+            end if;
+
+            --  Check for whitespace runs — collapse to single match
+            Consume_WS (D1, P1, E1, WS1);
+            Consume_WS (D2, P2, E2, WS2);
+            if WS1 /= WS2 then
+               return False;
+            end if;
+            if WS1 then
+               --  Both consumed WS, continue to next non-WS char
+               null;
+            else
+               --  Compare next character (case-insensitive)
+               if P1 > D1'Last or P2 > D2'Last then
+                  return False;
+               end if;
+               C1 := To_Lower (D1 (P1));
+               C2 := To_Lower (D2 (P2));
+               if C1 /= C2 then
+                  return False;
+               end if;
+               P1 := P1 + 1;
+               P2 := P2 + 1;
+            end if;
+            if Fuel = 0 then
+               return False;
+            end if;
+            Fuel := Fuel - 1;
+         end loop;
+         --  If we get here, at least one pointer reached the end.
+         --  Check if both are at/past end (after trimming trailing WS).
+         declare
+            T1 : N32 := P1;
+            T2 : N32 := P2;
+         begin
+            Skip_WS (D1, T1, E1);
+            Skip_WS (D2, T2, E2);
+            return T1 >= E1 and T2 >= E2;
+         end;
+      end Normalized_String_Equal;
+
+      --  Compare two attribute values.  For PrintableString (0x13) and
+      --  UTF8String (0x0C), use normalized comparison.  For everything
+      --  else, use byte-exact.
+      function Attr_Value_Equal
+        (D1 : Byte_Seq; Tag1 : Byte; S1 : N32; L1 : N32;
+         D2 : Byte_Seq; Tag2 : Byte; S2 : N32; L2 : N32) return Boolean
+      with Pre => D1'First = 0 and D1'Last < N32'Last
+                  and D2'First = 0 and D2'Last < N32'Last
+                  and (L1 = 0 or else Can_Read (D1, S1, L1))
+                  and (L2 = 0 or else Can_Read (D2, S2, L2))
+      is
+      begin
+         --  Both must be string types for normalized comparison
+         if (Tag1 = 16#13# or Tag1 = 16#0C#)
+            and (Tag2 = 16#13# or Tag2 = 16#0C#)
+         then
+            if L1 = 0 and L2 = 0 then return True; end if;
+            if L1 = 0 or L2 = 0 then return False; end if;
+            return Normalized_String_Equal (D1, S1, L1, D2, S2, L2);
+         end if;
+
+         --  Non-string: byte-exact comparison
+         if L1 /= L2 then return False; end if;
+         if L1 = 0 then return True; end if;
+         if not Can_Read (D1, S1, L1) then return False; end if;
+         if not Can_Read (D2, S2, L2) then return False; end if;
+         for I in N32 range 0 .. L1 - 1 loop
+            pragma Loop_Invariant (S1 + I <= D1'Last);
+            pragma Loop_Invariant (S2 + I <= D2'Last);
+            if D1 (S1 + I) /= D2 (S2 + I) then
+               return False;
+            end if;
+         end loop;
+         return True;
+      end Attr_Value_Equal;
+
+      --  Walk a Name SEQUENCE and extract the next RDN's first ATV.
+      --  P advances past the entire SET (RDN).
+      --  Set_End is set so the caller can advance past multi-valued RDNs.
+      procedure Next_ATV
+        (DER     : in     Byte_Seq;
+         P       : in out N32;
+         E       : in     N32;
+         OID_S   :    out N32;
+         OID_L   :    out N32;
+         Val_Tag :    out Byte;
+         Val_S   :    out N32;
+         Val_L   :    out N32;
+         Set_End :    out N32;
+         OK      :    out Boolean)
+      with Pre => DER'First = 0 and DER'Last < N32'Last
+                  and E <= DER'Last + 1
+      is
+         Set_Len, Seq_Len, OL, VL : N32;
+         Loc_OK : Boolean := True;
+      begin
+         OID_S := 0; OID_L := 0;
+         Val_Tag := 0; Val_S := 0; Val_L := 0;
+         Set_End := P; OK := False;
+         if P >= E or P > DER'Last then return; end if;
+         --  SET { SEQUENCE { OID, value } }
+         if DER (P) /= TAG_SET then return; end if;
+         P := P + 1;
+         if P > DER'Last then return; end if;
+         Parse_Length (DER, P, Set_Len, Loc_OK);
+         if not Loc_OK or else not Can_Read (DER, P, Set_Len) then
+            return;
+         end if;
+         Set_End := P + Set_Len;
+         --  SEQUENCE inside SET
+         if P > DER'Last or else DER (P) /= TAG_SEQUENCE then return; end if;
+         P := P + 1;
+         if P > DER'Last then return; end if;
+         Parse_Length (DER, P, Seq_Len, Loc_OK);
+         if not Loc_OK or else Seq_Len = 0 then return; end if;
+         if not Can_Read (DER, P, Seq_Len) then return; end if;
+         --  OID
+         if P > DER'Last or else DER (P) /= TAG_OID then return; end if;
+         P := P + 1;
+         if P > DER'Last then return; end if;
+         Parse_Length (DER, P, OL, Loc_OK);
+         if not Loc_OK then return; end if;
+         OID_S := P;
+         OID_L := OL;
+         Skip (DER, P, OL, Loc_OK);
+         if not Loc_OK then return; end if;
+         --  Value (any tag)
+         if P > DER'Last then return; end if;
+         Val_Tag := DER (P);
+         P := P + 1;
+         if P > DER'Last then return; end if;
+         Parse_Length (DER, P, VL, Loc_OK);
+         if not Loc_OK then return; end if;
+         Val_S := P;
+         Val_L := VL;
+         --  Advance P to end of SET (skip entire RDN)
+         P := Set_End;
+         OK := True;
+      end Next_ATV;
+
+      CI_Len : N32;
+      IS_Len : N32;
+   begin  --  Issuer_Matches
       if not Cert_Issuer.Present or not Issuer_Subj.Present then
          return False;
       end if;
-      Len := Span_Length (Cert_Issuer);
-      if Len /= Span_Length (Issuer_Subj) then
-         return False;
+      CI_Len := Span_Length (Cert_Issuer);
+      IS_Len := Span_Length (Issuer_Subj);
+
+      --  Fast path: byte-exact match
+      if CI_Len = IS_Len and then CI_Len > 0
+         and then Can_Read (Cert_DER, Cert_Issuer.First, CI_Len)
+         and then Can_Read (Issuer_DER, Issuer_Subj.First, IS_Len)
+      then
+         declare
+            Exact : Boolean := True;
+         begin
+            for I in N32 range 0 .. CI_Len - 1 loop
+               pragma Loop_Invariant
+                 (Cert_Issuer.First + I <= Cert_DER'Last);
+               pragma Loop_Invariant
+                 (Issuer_Subj.First + I <= Issuer_DER'Last);
+               if Cert_DER (Cert_Issuer.First + I) /=
+                  Issuer_DER (Issuer_Subj.First + I)
+               then
+                  Exact := False;
+                  exit;
+               end if;
+            end loop;
+            if Exact then
+               return True;
+            end if;
+         end;
       end if;
-      if Len = 0 then
+
+      --  Both empty = match
+      if CI_Len = 0 and IS_Len = 0 then
          return True;
       end if;
-      if not Can_Read (Cert_DER, Cert_Issuer.First, Len) then
+      if CI_Len = 0 or IS_Len = 0 then
          return False;
       end if;
-      if not Can_Read (Issuer_DER, Issuer_Subj.First, Len) then
+      if not Can_Read (Cert_DER, Cert_Issuer.First, CI_Len) then
          return False;
       end if;
-      for I in N32 range 0 .. Len - 1 loop
-         pragma Loop_Invariant (Cert_Issuer.First + I <= Cert_DER'Last);
-         pragma Loop_Invariant (Issuer_Subj.First + I <= Issuer_DER'Last);
-         if Cert_DER (Cert_Issuer.First + I) /=
-            Issuer_DER (Issuer_Subj.First + I)
-         then
-            return False;
-         end if;
-      end loop;
-      return True;
+      if not Can_Read (Issuer_DER, Issuer_Subj.First, IS_Len) then
+         return False;
+      end if;
+
+      --  Semantic comparison: walk RDNs in parallel
+      declare
+         P1 : N32 := Cert_Issuer.First;
+         P2 : N32 := Issuer_Subj.First;
+         E1 : constant N32 := Cert_Issuer.First + CI_Len;
+         E2 : constant N32 := Issuer_Subj.First + IS_Len;
+         OID_S1, OID_S2 : N32;
+         OID_L1, OID_L2 : N32;
+         VT1, VT2       : Byte;
+         VS1, VS2       : N32;
+         VL1, VL2       : N32;
+         SE1, SE2       : N32;
+         OK1, OK2       : Boolean;
+         Fuel           : N32 := CI_Len + IS_Len;
+      begin
+         while P1 < E1 and then P2 < E2 loop
+            pragma Loop_Variant (Decreases => Fuel);
+            pragma Loop_Invariant
+              (P1 >= Cert_DER'First and P2 >= Issuer_DER'First);
+
+            declare
+               Old_P1 : constant N32 := P1;
+               Old_P2 : constant N32 := P2;
+            begin
+               Next_ATV (Cert_DER, P1, E1,
+                         OID_S1, OID_L1, VT1, VS1, VL1, SE1, OK1);
+               Next_ATV (Issuer_DER, P2, E2,
+                         OID_S2, OID_L2, VT2, VS2, VL2, SE2, OK2);
+
+               if not OK1 or not OK2 then
+                  return False;
+               end if;
+
+               --  Ensure forward progress
+               if P1 <= Old_P1 or P2 <= Old_P2 then
+                  return False;
+               end if;
+            end;
+            if Fuel = 0 then
+               return False;
+            end if;
+            Fuel := Fuel - 1;
+
+            --  OIDs must match exactly
+            if OID_L1 /= OID_L2 then
+               return False;
+            end if;
+            if OID_L1 > 0
+               and then Can_Read (Cert_DER, OID_S1, OID_L1)
+               and then Can_Read (Issuer_DER, OID_S2, OID_L2)
+            then
+               for I in N32 range 0 .. OID_L1 - 1 loop
+                  pragma Loop_Invariant (OID_S1 + I <= Cert_DER'Last);
+                  pragma Loop_Invariant (OID_S2 + I <= Issuer_DER'Last);
+                  if Cert_DER (OID_S1 + I) /= Issuer_DER (OID_S2 + I) then
+                     return False;
+                  end if;
+               end loop;
+            end if;
+
+            --  Values must match (with normalization for strings)
+            if (VL1 > 0 and then not Can_Read (Cert_DER, VS1, VL1))
+               or (VL2 > 0 and then not Can_Read (Issuer_DER, VS2, VL2))
+            then
+               return False;
+            end if;
+            if not Attr_Value_Equal
+              (Cert_DER, VT1, VS1, VL1,
+               Issuer_DER, VT2, VS2, VL2)
+            then
+               return False;
+            end if;
+         end loop;
+         --  Both exhausted = match; one exhausted = mismatch
+         return P1 >= E1 and P2 >= E2;
+      end;
    end Issuer_Matches;
 
    function Issuer_May_Sign (Issuer : Certificate) return Boolean is

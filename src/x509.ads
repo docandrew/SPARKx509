@@ -238,8 +238,11 @@ is
    --  Chain validation (structural checks between issuer and subject)
    --================================================================
 
-   --  Check if Issuer_DER's subject DN matches Cert_DER's issuer DN.
-   --  Both DER buffers needed to resolve the Span offsets.
+   --  RFC 5280 §7.1: Check if Issuer_DER's subject DN matches Cert_DER's
+   --  issuer DN.  Comparison is semantic: RDN attributes are matched by
+   --  OID, and PrintableString/UTF8String values are compared after
+   --  case folding and whitespace normalization (collapse runs, trim).
+   --  Falls back to byte-exact comparison for non-string types.
    function Issuer_Matches
      (Cert      : Certificate;
       Cert_DER  : Byte_Seq;
@@ -247,6 +250,9 @@ is
       Issuer_DER : Byte_Seq) return Boolean
    with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
                and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last;
+   --  RFC 5280 §7.1: True only if both names are present and
+   --  semantically equal after PrintableString/UTF8String
+   --  normalization (case folding, whitespace collapsing/trimming).
 
    --  Check if the issuer's Key Usage allows cert signing.
    --  RFC 5280 §4.2.1.3: keyCertSign bit must be set.
@@ -360,12 +366,6 @@ is
         --  RFC 5280 4.1.1.2: TBS and outer sig algo must match when both known
         and (Sig_Algorithm_2 (Cert) = Algo_Unknown
              or else Sig_Algorithm (Cert) = Sig_Algorithm_2 (Cert))
-        --  RFC 5280 4.2.1.3: Key Usage must be critical when present
-        and (not Has_Key_Usage (Cert)
-             or else Is_Key_Usage_Critical (Cert))
-        --  RFC 5280 4.2.1.9: Basic Constraints must be critical for CAs
-        and (not Is_CA (Cert)
-             or else Is_Basic_Constraints_Critical (Cert))
         --  RFC 5280 4.2.1.3: keyCertSign requires CA
         and not Has_Key_Cert_Sign_Without_CA (Cert)
         --  RFC 5280 4.2: Extension criticality enforcement
