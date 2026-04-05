@@ -206,6 +206,7 @@ is
 
    --  Authority Key Identifier
    function Authority_Key_ID (Cert : Certificate) return Span;
+   function AKID_Serial      (Cert : Certificate) return Span;
    function Subject_Key_ID   (Cert : Certificate) return Span;
 
    --================================================================
@@ -250,6 +251,10 @@ is
    --  Check if the issuer's Key Usage allows cert signing.
    --  RFC 5280 §4.2.1.3: keyCertSign bit must be set.
    function Issuer_May_Sign (Issuer : Certificate) return Boolean;
+
+   --  Check if the issuer's EKU (if present) is compatible with cert signing.
+   --  RFC 5280 §4.2.1.12: if EKU present, must not restrict to non-signing.
+   function Issuer_EKU_Allows_Signing (Issuer : Certificate) return Boolean;
 
    --  Check if the cert satisfies the issuer's name constraints.
    --  Returns True if no name constraints or all constraints satisfied.
@@ -324,6 +329,9 @@ is
    function Has_SAN_Critical_With_Subject (Cert : Certificate) return Boolean;
    --  RFC 5280 §4.1.2.1: v3 UniqueID present but no extensions
    function Has_V3_UniqueID_NoExts (Cert : Certificate) return Boolean;
+
+   --  RFC 5280 §4.2.1.9: pathLen present but cA is FALSE
+   function Has_Path_Len_Without_CA (Cert : Certificate) return Boolean;
 
    --  Comprehensive structural validation (everything except signature).
    --  The postcondition formally encodes RFC 5280 requirements:
@@ -401,7 +409,9 @@ is
         --  RFC 5280 4.2.1.6: SAN critical with non-empty subject
         and not Has_SAN_Critical_With_Subject (Cert)
         --  RFC 5280 4.1.2.1: v3 UniqueID without extensions
-        and not Has_V3_UniqueID_NoExts (Cert));
+        and not Has_V3_UniqueID_NoExts (Cert)
+        --  RFC 5280 4.2.1.9: pathLen requires cA=TRUE
+        and not Has_Path_Len_Without_CA (Cert));
 
 private
 
@@ -418,6 +428,14 @@ private
       S_Subject_CN         : Span;
       S_Subject_Org        : Span;
       S_Subject_Country    : Span;
+
+      --  Raw DN spans (for byte-level issuer/subject matching)
+      S_Issuer_Raw         : Span;  --  full issuer SEQUENCE content
+      S_Subject_Raw        : Span;  --  full subject SEQUENCE content
+
+      --  Name constraints (from issuer's NameConstraints extension)
+      S_Permitted_Subtrees : Span;  --  span of permittedSubtrees [0]
+      S_Excluded_Subtrees  : Span;  --  span of excludedSubtrees [1]
 
       --  Serial number span
       S_Serial             : Span;
@@ -455,11 +473,13 @@ private
       --  Second signature algorithm (after TBS, must match first)
       Sig_Algo_2           : Algorithm_ID  := Algo_Unknown;
       S_Auth_Key_ID        : Span;
+      S_AKID_Serial        : Span;
       S_Subject_Key_ID     : Span;
 
       --  Subject Alternative Names
       SANs                 : SAN_Array     := (others => (0, 0, False));
       SAN_Num              : Natural       := 0;
+      SAN_Has_Email        : Boolean       := False;
 
       --  RFC 5280 validation flags
       Bad_Ext_Criticality  : Boolean       := False;
@@ -480,6 +500,8 @@ private
       Bad_AKID             : Boolean       := False;
       Bad_Subject_Encoding : Boolean       := False;
       Bad_EKU_Content      : Boolean       := False;
+      Ext_Has_EKU          : Boolean       := False;
+      EKU_Has_Any          : Boolean       := False;
       Bad_CRL_DP           : Boolean       := False;
       SAN_Critical_With_Subject : Boolean  := False;
       V3_UniqueID_NoExts   : Boolean       := False;

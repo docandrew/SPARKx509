@@ -222,6 +222,24 @@ is
    --  anyExtendedKeyUsage: 2.5.29.37.0
    OID_ANY_EKU : constant Byte_Seq (0 .. 3) :=
      (16#55#, 16#1D#, 16#25#, 16#00#);
+   --  Authority Information Access: 1.3.6.1.5.5.7.1.1
+   OID_AIA : constant Byte_Seq (0 .. 7) :=
+     (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#01#, 16#01#);
+   --  Subject Information Access: 1.3.6.1.5.5.7.1.11
+   OID_SIA : constant Byte_Seq (0 .. 7) :=
+     (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#01#, 16#0B#);
+   --  Subject Directory Attributes: 2.5.29.9
+   OID_SUBJ_DIR_ATTR : constant Byte_Seq (0 .. 2) :=
+     (16#55#, 16#1D#, 16#09#);
+   --  anyPolicy: 2.5.29.32.0
+   OID_ANY_POLICY : constant Byte_Seq (0 .. 3) :=
+     (16#55#, 16#1D#, 16#20#, 16#00#);
+   --  id-qt-cps: 1.3.6.1.5.5.7.2.1
+   OID_QT_CPS : constant Byte_Seq (0 .. 7) :=
+     (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#02#, 16#01#);
+   --  id-qt-unotice: 1.3.6.1.5.5.7.2.2
+   OID_QT_UNOTICE : constant Byte_Seq (0 .. 7) :=
+     (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#02#, 16#02#);
 
    function OID_Match
      (DER    : Byte_Seq;
@@ -610,6 +628,7 @@ is
    is
       Len   : N32;
       Found : Boolean;
+      pragma Warnings (Off, Len);
    begin
       if not Valid then return; end if;
 
@@ -786,9 +805,13 @@ is
                      Parse_Time_Value (DER, Pos, T_Len,
                                        C.Validity_Not_Before, Valid);
                      if Valid then
-                        Check_Time_Format (Saved_Tag, Time_Start,
-                                           Time_Len,
-                                           C.Validity_Not_Before);
+                        declare
+                           DT_Copy : constant Date_Time :=
+                             C.Validity_Not_Before;
+                        begin
+                           Check_Time_Format (Saved_Tag, Time_Start,
+                                              Time_Len, DT_Copy);
+                        end;
                      end if;
                   end;
                end if;
@@ -812,9 +835,13 @@ is
                      Parse_Time_Value (DER, Pos, T_Len,
                                        C.Validity_Not_After, Valid);
                      if Valid then
-                        Check_Time_Format (Saved_Tag, Time_Start,
-                                           Time_Len,
-                                           C.Validity_Not_After);
+                        declare
+                           DT_Copy : constant Date_Time :=
+                             C.Validity_Not_After;
+                        begin
+                           Check_Time_Format (Saved_Tag, Time_Start,
+                                              Time_Len, DT_Copy);
+                        end;
                      end if;
                   end;
                end if;
@@ -931,6 +958,21 @@ is
                   if Pos <= DER'Last then
                      Parse_Length (DER, Pos, Mod_Len, Valid);
                      if Valid then
+                        --  RFC 5280: RSA modulus must be positive
+                        --  Check before stripping the leading zero byte
+                        if Mod_Len > 0 and then Pos <= DER'Last
+                           and then DER (Pos) >= 16#80#
+                        then
+                           C.Bad_PubKey := True;
+                        end if;
+                        --  DER: no unnecessary leading zero
+                        if Mod_Len >= 2 and then Pos <= DER'Last
+                           and then DER (Pos) = 0
+                           and then Pos + 1 <= DER'Last
+                           and then DER (Pos + 1) < 16#80#
+                        then
+                           C.Bad_DER := True;
+                        end if;
                         --  Skip leading zero byte if present
                         if Mod_Len > 0 and then Pos <= DER'Last
                            and then DER (Pos) = 0
@@ -939,12 +981,6 @@ is
                            Mod_Len := Mod_Len - 1;
                         end if;
                         Copy_Bytes (DER, Pos, Mod_Len, C.PK_Buf, C.PK_Buf_Len);
-                        --  RFC 5280: RSA modulus must be positive
-                        if C.PK_Buf_Len > 0
-                           and then C.PK_Buf (0) >= 16#80#
-                        then
-                           C.Bad_PubKey := True;
-                        end if;
                         Skip (DER, Pos, Mod_Len, Valid);
                      end if;
                   end if;
@@ -958,6 +994,18 @@ is
                         and then Can_Read (DER, Pos, Exp_Len)
                      then
                         pragma Assert (Pos + Exp_Len - 1 <= DER'Last);
+                        --  RFC 3279: exponent must be positive
+                        if DER (Pos) >= 16#80# then
+                           C.Bad_PubKey := True;
+                        end if;
+                        --  DER: no unnecessary leading zero
+                        if Exp_Len >= 2
+                           and then DER (Pos) = 0
+                           and then Pos + 1 <= DER'Last
+                           and then DER (Pos + 1) < 16#80#
+                        then
+                           C.Bad_DER := True;
+                        end if;
                         C.PK_RSA_Exp := 0;
                         declare
                            Limit : constant N32 := N32'Min (Exp_Len, 4);
@@ -1152,8 +1200,6 @@ is
                C.Bad_SAN := True;
             end if;
             declare
-               Saw_DNS  : Boolean := False;
-               Saw_Other : Boolean := False;
             begin
             while Valid and then P < Inner_End
                   and then P <= DER'Last
@@ -1174,7 +1220,7 @@ is
                   --  Tag 0x82 = dNSName (context
                   --  tag 2, primitive)
                   if GN_Tag = 16#82# then
-                     Saw_DNS := True;
+
                      if GN_Len = 0 then
                         --  Blank DNS name
                         C.Bad_SAN := True;
@@ -1217,7 +1263,8 @@ is
 
                   elsif GN_Tag = 16#81# then
                      --  rfc822Name (email)
-                     Saw_Other := True;
+
+                     C.SAN_Has_Email := True;
                      --  Empty GeneralName value
                      if GN_Len = 0 then
                         C.Bad_SAN := True;
@@ -1265,7 +1312,7 @@ is
 
                   elsif GN_Tag = 16#86# then
                      --  uniformResourceIdentifier
-                     Saw_Other := True;
+
                      if GN_Len = 0 then
                         C.Bad_SAN := True;
                      end if;
@@ -1311,7 +1358,7 @@ is
 
                   elsif GN_Tag = 16#87# then
                      --  iPAddress
-                     Saw_Other := True;
+
                      if GN_Len /= 4
                         and then GN_Len /= 16
                      then
@@ -1319,11 +1366,14 @@ is
                      end if;
 
                   elsif GN_Tag in
-                     16#80# | 16#83# | 16#84#
-                     | 16#85# | 16#88#
+                     16#A0#            --  otherName
+                     | 16#83#          --  x400Address
+                     | 16#A4#          --  directoryName
+                     | 16#A5#          --  ediPartyName
+                     | 16#88#          --  registeredID
                   then
                      --  Other known tags
-                     Saw_Other := True;
+                     null;
 
                   else
                      --  Unrecognized SAN tag
@@ -1483,32 +1533,44 @@ is
                      C.Empty_Key_Usage := True;
                   end if;
                   --  X.690 §11.2.2: DER BIT STRING
-                  --  trailing zero bits check.
-                  --  The unused_bits count must match
-                  --  actual trailing zeros in last byte.
-                  if BS_Len >= 1
-                     and then Unused_Bits > 0
-                  then
+                  --  trailing zero bits must be removed.
+                  if BS_Len >= 1 then
                      declare
-                        Last_Byte : Byte;
-                        Mask : Byte;
+                        Last_Byte : Byte := 0;
                      begin
                         if BS_Len = 1
                            and then P <= DER'Last
                         then
                            Last_Byte := DER (P);
                         elsif BS_Len >= 2
-                           and then P + 1 <= DER'Last
+                           and then P + BS_Len - 1 <=
+                              DER'Last
                         then
-                           Last_Byte := DER (P + 1);
-                        else
-                           Last_Byte := 0;
+                           Last_Byte :=
+                             DER (P + BS_Len - 1);
                         end if;
-                        --  Mask for the unused bits
-                        Mask :=
-                          Shift_Left (1, Natural (Unused_Bits)) - 1;
-                        if (Last_Byte and Mask) /= 0 then
+                        --  Non-minimal: last byte is
+                        --  all zero (could be removed)
+                        if BS_Len >= 2
+                           and then Last_Byte = 0
+                        then
                            C.Bad_DER := True;
+                        end if;
+                        --  Unused bits must be zero
+                        if Unused_Bits > 0 then
+                           declare
+                              Mask : constant Byte :=
+                                Shift_Left
+                                  (1, Natural
+                                     (Unused_Bits))
+                                  - 1;
+                           begin
+                              if (Last_Byte and Mask)
+                                    /= 0
+                              then
+                                 C.Bad_DER := True;
+                              end if;
+                           end;
                         end if;
                      end;
                   end if;
@@ -1590,9 +1652,11 @@ is
          and then DER (P) = TAG_SEQUENCE
       then
          Parse_Sequence (DER, P, Inner_Len, Valid);
-         if Valid and then Inner_Len > 0
-            and then Can_Read (DER, P, Inner_Len)
-         then
+         if Valid then
+            if Inner_Len = 0 then
+               --  Empty AKID SEQUENCE: missing keyIdentifier
+               C.AKID_Missing_Key_ID := True;
+            elsif Can_Read (DER, P, Inner_Len) then
             Inner_End := P + Inner_Len;
             declare
                Has_Key_ID  : Boolean := False;
@@ -1624,6 +1688,17 @@ is
                   Parse_Length
                     (DER, Scan_Pos, AKID_TLen, Valid);
                   if Valid then
+                     --  Save AKID serial span
+                     if AKID_Tag = 16#82#
+                        and then AKID_TLen > 0
+                        and then Can_Read
+                          (DER, Scan_Pos, AKID_TLen)
+                     then
+                        C.S_AKID_Serial :=
+                          (First   => Scan_Pos,
+                           Last    => Scan_Pos + AKID_TLen - 1,
+                           Present => True);
+                     end if;
                      --  Validate [1] authorityCertIssuer content
                      if AKID_Tag = 16#A1#
                         and then AKID_TLen > 0
@@ -1725,9 +1800,75 @@ is
                C.Bad_AKID := True;
             end if;
             end;
-         end if;
+            end if;  --  elsif Can_Read
+         end if;  --  if Valid
       end if;
    end Parse_Ext_AKID;
+
+   --  Check a userNotice qualifier for BMPString or control chars.
+   --  P should point at the UserNotice SEQUENCE.
+   procedure Check_User_Notice
+     (DER : in     Byte_Seq;
+      P   : in     N32;
+      Lim : in     N32;
+      Bad : in out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+   is
+      UP     : N32;
+      UL     : N32;
+      UE     : N32;
+      OK     : Boolean := True;
+   begin
+      if P > DER'Last or else DER (P) /= TAG_SEQUENCE then
+         return;
+      end if;
+      UP := P;
+      Parse_Sequence (DER, UP, UL, OK);
+      if not OK or else UL = 0 or else not Can_Read (DER, UP, UL) then
+         return;
+      end if;
+      UE := UP + UL;
+      if UE > Lim then
+         UE := Lim;
+      end if;
+
+      --  Walk elements inside UserNotice SEQUENCE
+      while OK and then UP < UE and then UP <= DER'Last loop
+         declare
+            Tag : constant Byte := DER (UP);
+            TL  : N32;
+         begin
+            UP := UP + 1;
+            if UP > DER'Last then exit; end if;
+            Parse_Length (DER, UP, TL, OK);
+            if not OK then exit; end if;
+
+            --  RFC 5280: explicitText MUST NOT use BMPString
+            if Tag = 16#1E# then
+               Bad := True;
+            end if;
+
+            --  RFC 5280: explicitText SHOULD NOT have control chars
+            if Tag = 16#0C# and then TL > 0
+               and then Can_Read (DER, UP, TL)
+            then
+               for K in N32 range 0 .. TL - 1 loop
+                  pragma Loop_Invariant (UP + K <= DER'Last);
+                  if DER (UP + K) < 16#20#
+                     and then DER (UP + K) /= 16#09#
+                     and then DER (UP + K) /= 16#0A#
+                     and then DER (UP + K) /= 16#0D#
+                  then
+                     Bad := True;
+                  end if;
+               end loop;
+            end if;
+
+            Skip (DER, UP, TL, OK);
+            if not OK then exit; end if;
+         end;
+      end loop;
+   end Check_User_Notice;
 
    procedure Parse_Ext_Cert_Policies
      (DER         : in     Byte_Seq;
@@ -1780,8 +1921,8 @@ is
                declare
                   PI_Len   : N32;
                   PI_End   : N32;
-                  PO_Len   : N32;
-                  PO_Start : N32;
+                  PO_Len   : N32 := 0;
+                  PO_Start : N32 := 0;
                begin
                   Parse_Sequence
                     (DER, P, PI_Len, Valid);
@@ -1862,60 +2003,127 @@ is
                      Skip (DER, P, PO_Len, Valid);
                      if not Valid then exit; end if;
                   end if;
-                  --  Scan remaining PI bytes for
-                  --  BMPString tag (0x1E) and
-                  --  control chars in UTF8String
-                  while P < PI_End
-                        and then P <= DER'Last
-                  loop
-                     if DER (P) = 16#1E# then
-                        C.Bad_Cert_Policy := True;
-                     end if;
-                     --  Check for UTF8String (0x0C)
-                     --  containing control characters
-                     if DER (P) = 16#0C#
-                        and then P + 1 <= DER'Last
-                     then
-                        declare
-                           U8_Pos : N32 := P + 1;
-                           U8_Len : N32;
-                           U8_Valid : Boolean := True;
-                        begin
-                           Parse_Length
-                             (DER, U8_Pos, U8_Len,
-                              U8_Valid);
-                           if U8_Valid
-                              and then U8_Len > 0
-                              and then Can_Read
-                                (DER, U8_Pos, U8_Len)
-                           then
-                              for K in N32 range
-                                0 .. U8_Len - 1
-                              loop
-                                 pragma Loop_Invariant
-                                   (U8_Pos + K
-                                      <= DER'Last);
-                                 if DER (U8_Pos + K)
-                                      < 16#20#
+                  --  Check policy qualifiers if present
+                  declare
+                     Is_Any : constant Boolean :=
+                       PO_Len > 0
+                       and then Can_Read
+                         (DER, PO_Start, PO_Len)
+                       and then OID_Match
+                         (DER, PO_Start, PO_Len,
+                          OID_ANY_POLICY);
+                  begin
+                  --  Walk qualifiers SEQUENCE if present
+                  if P < PI_End and then P <= DER'Last
+                     and then DER (P) = TAG_SEQUENCE
+                  then
+                     declare
+                        QS_Len : N32;
+                        QS_End : N32;
+                     begin
+                        Parse_Sequence
+                          (DER, P, QS_Len, Valid);
+                        if Valid and then QS_Len > 0
+                           and then Can_Read
+                             (DER, P, QS_Len)
+                        then
+                           QS_End := P + QS_Len;
+                           --  Each PolicyQualifierInfo
+                           while Valid
+                                 and then P < QS_End
+                                 and then P <= DER'Last
+                                 and then DER (P) =
+                                    TAG_SEQUENCE
+                           loop
+                              declare
+                                 PQ_Len : N32;
+                                 PQ_End : N32;
+                                 QOL    : N32;
+                                 QOS    : N32;
+                                 Is_CPS : Boolean :=
+                                   False;
+                                 Is_UNot : Boolean :=
+                                   False;
+                              begin
+                                 Parse_Sequence
+                                   (DER, P, PQ_Len,
+                                    Valid);
+                                 if not Valid then
+                                    exit;
+                                 end if;
+                                 if not Can_Read
+                                   (DER, P, PQ_Len)
+                                 then
+                                    exit;
+                                 end if;
+                                 PQ_End := P + PQ_Len;
+                                 --  Qualifier OID
+                                 if P <= DER'Last
+                                    and then DER (P) =
+                                       TAG_OID
+                                 then
+                                    P := P + 1;
+                                    if P > DER'Last
+                                    then
+                                       exit;
+                                    end if;
+                                    Parse_Length
+                                      (DER, P, QOL,
+                                       Valid);
+                                    if not Valid then
+                                       exit;
+                                    end if;
+                                    QOS := P;
+                                    if Can_Read
+                                      (DER, QOS, QOL)
+                                    then
+                                       Is_CPS :=
+                                         OID_Match
+                                           (DER, QOS,
+                                            QOL,
+                                            OID_QT_CPS);
+                                       Is_UNot :=
+                                         OID_Match
+                                           (DER, QOS,
+                                            QOL,
+                                            OID_QT_UNOTICE);
+                                    end if;
+                                    Skip
+                                      (DER, P, QOL,
+                                       Valid);
+                                    if not Valid then
+                                       exit;
+                                    end if;
+                                 end if;
+                                 --  anyPolicy: only
+                                 --  CPS and unotice
+                                 if Is_Any
                                     and then
-                                    DER (U8_Pos + K)
-                                      /= 16#09#
+                                    not Is_CPS
                                     and then
-                                    DER (U8_Pos + K)
-                                      /= 16#0A#
-                                    and then
-                                    DER (U8_Pos + K)
-                                      /= 16#0D#
+                                    not Is_UNot
                                  then
                                     C.Bad_Cert_Policy
                                       := True;
                                  end if;
-                              end loop;
-                           end if;
-                        end;
-                     end if;
-                     P := P + 1;
-                  end loop;
+                                 --  Check userNotice for
+                                 --  BMPString / ctrl chars
+                                 if Is_UNot
+                                    and then P < PQ_End
+                                    and then P <=
+                                       DER'Last
+                                 then
+                                    Check_User_Notice
+                                      (DER, P, PQ_End,
+                                       C.Bad_Cert_Policy);
+                                 end if;
+                                 P := PQ_End;
+                              end;
+                           end loop;
+                        end if;
+                     end;
+                  end if;
+                  end;
                   P := PI_End;
                end;
             end loop;
@@ -1941,6 +2149,7 @@ is
       pragma Unreferenced (Val_Len);
       --  RFC 5280 §4.2.1.12: Extended Key Usage
       --  SEQUENCE of OID, each must be valid
+      C.Ext_Has_EKU := True;
       if P <= DER'Last
          and then DER (P) = TAG_SEQUENCE
       then
@@ -1977,13 +2186,16 @@ is
                   if EKU_OLen = 0 then
                      C.Bad_EKU_Content := True;
                   end if;
-                  --  anyExtendedKeyUsage in critical EKU
-                  if Is_Critical
-                     and then OID_Match
+                  --  Track anyExtendedKeyUsage
+                  if OID_Match
                        (DER, EKU_Start, EKU_OLen,
                         OID_ANY_EKU)
                   then
-                     C.Bad_EKU_Content := True;
+                     C.EKU_Has_Any := True;
+                     --  anyEKU in critical EKU is invalid
+                     if Is_Critical then
+                        C.Bad_EKU_Content := True;
+                     end if;
                   end if;
                   Skip (DER, P, EKU_OLen, Valid);
                end;
@@ -2143,7 +2355,6 @@ is
       if Can_Read (DER, Pos, Exts_Seq_Len) then
          Exts_End := Pos + Exts_Seq_Len;
       else
-         Exts_End := Pos;
          Valid := False;
          return;
       end if;
@@ -2201,16 +2412,7 @@ is
                if not Valid then exit; end if;
 
                --  RFC 5280: extension value must not be empty
-               --  Also catch OCTET STRING wrapping an empty SEQUENCE
-               --  (e.g., 3000 = SEQUENCE length 0)
                if Val_Len = 0 then
-                  C.Bad_Ext_Content := True;
-               elsif Val_Len >= 2
-                  and then Pos <= DER'Last
-                  and then Pos + 1 <= DER'Last
-                  and then DER (Pos) = 16#30#
-                  and then DER (Pos + 1) = 0
-               then
                   C.Bad_Ext_Content := True;
                end if;
 
@@ -2302,13 +2504,92 @@ is
                   end if;
                   --  RFC 5280 §4.2.1.10: only on CA certs
                   C.Has_Name_Constraints := True;
+                  --  Parse NameConstraints SEQUENCE for subtree spans
+                  if Pos <= DER'Last
+                     and then DER (Pos) = TAG_SEQUENCE
+                  then
+                     declare
+                        NC_Len : N32;
+                        NC_End : N32;
+                        NC_P   : N32;
+                        NC_OK  : Boolean := True;
+                     begin
+                        NC_P := Pos;
+                        Parse_Sequence (DER, NC_P, NC_Len, NC_OK);
+                        if NC_OK and then Can_Read (DER, NC_P, NC_Len) then
+                           NC_End := NC_P + NC_Len;
+                           --  Look for [0] permittedSubtrees (tag 0xA0)
+                           if NC_P < NC_End and then NC_P <= DER'Last
+                              and then DER (NC_P) = 16#A0#
+                           then
+                              declare
+                                 PT_Len : N32;
+                              begin
+                                 NC_P := NC_P + 1;
+                                 if NC_P <= DER'Last then
+                                    Parse_Length (DER, NC_P, PT_Len, NC_OK);
+                                    if NC_OK and then PT_Len > 0
+                                       and then Can_Read (DER, NC_P, PT_Len)
+                                    then
+                                       C.S_Permitted_Subtrees :=
+                                         (First   => NC_P,
+                                          Last    => NC_P + PT_Len - 1,
+                                          Present => True);
+                                       NC_P := NC_P + PT_Len;
+                                    end if;
+                                 end if;
+                              end;
+                           end if;
+                           --  Look for [1] excludedSubtrees (tag 0xA1)
+                           if NC_OK and then NC_P < NC_End
+                              and then NC_P <= DER'Last
+                              and then DER (NC_P) = 16#A1#
+                           then
+                              declare
+                                 ET_Len : N32;
+                              begin
+                                 NC_P := NC_P + 1;
+                                 if NC_P <= DER'Last then
+                                    Parse_Length (DER, NC_P, ET_Len, NC_OK);
+                                    if NC_OK and then ET_Len > 0
+                                       and then Can_Read (DER, NC_P, ET_Len)
+                                    then
+                                       C.S_Excluded_Subtrees :=
+                                         (First   => NC_P,
+                                          Last    => NC_P + ET_Len - 1,
+                                          Present => True);
+                                    end if;
+                                 end if;
+                              end;
+                           end if;
+                        end if;
+                     end;
+                  end if;
 
                elsif OID_Match
                   (DER, OID_Start, OID_Len, OID_POLICY_CONS)
-                  or else OID_Match
+               then
+                  --  RFC 5280: MUST be critical
+                  if not Is_Critical then
+                     C.Bad_Ext_Criticality := True;
+                  end if;
+                  --  RFC 5280 §4.2.1.11: MUST NOT be empty sequence
+                  if Val_Len = 2
+                     and then Pos <= DER'Last
+                     and then Pos + 1 <= DER'Last
+                     and then DER (Pos) = TAG_SEQUENCE
+                     and then DER (Pos + 1) = 0
+                  then
+                     C.Bad_Ext_Content := True;
+                  end if;
+                  --  RFC 5280 §4.2.1.9: pathLen without CA
+                  --  (PolicyConstraints also needs non-CA check
+                  --   but that's a different field)
+
+               elsif OID_Match
                   (DER, OID_Start, OID_Len, OID_POLICY_MAP)
                then
-                  --  RFC 5280: these MUST be critical
+                  --  RFC 5280: MUST be critical
                   if not Is_Critical then
                      C.Bad_Ext_Criticality := True;
                   end if;
@@ -2365,6 +2646,42 @@ is
                            end;
                         end if;
                      end if;
+                  end if;
+
+               elsif OID_Match
+                  (DER, OID_Start, OID_Len, OID_AIA)
+                  or else OID_Match
+                  (DER, OID_Start, OID_Len, OID_SIA)
+               then
+                  --  RFC 5280 §4.2.2.1/§4.2.2.2: MUST NOT be critical
+                  if Is_Critical then
+                     C.Bad_Ext_Criticality := True;
+                  end if;
+                  --  SEQUENCE SIZE (1..MAX)
+                  if Val_Len = 2
+                     and then Pos <= DER'Last
+                     and then Pos + 1 <= DER'Last
+                     and then DER (Pos) = TAG_SEQUENCE
+                     and then DER (Pos + 1) = 0
+                  then
+                     C.Bad_Ext_Content := True;
+                  end if;
+
+               elsif OID_Match
+                  (DER, OID_Start, OID_Len, OID_SUBJ_DIR_ATTR)
+               then
+                  --  RFC 5280 §4.2.1.8: MUST NOT be critical
+                  if Is_Critical then
+                     C.Bad_Ext_Criticality := True;
+                  end if;
+                  --  SEQUENCE of one or more
+                  if Val_Len = 2
+                     and then Pos <= DER'Last
+                     and then Pos + 1 <= DER'Last
+                     and then DER (Pos) = TAG_SEQUENCE
+                     and then DER (Pos + 1) = 0
+                  then
+                     C.Bad_Ext_Content := True;
                   end if;
 
                else
@@ -2459,6 +2776,10 @@ is
                          S_Subject_CN        => (0, 0, False),
                          S_Subject_Org       => (0, 0, False),
                          S_Subject_Country   => (0, 0, False),
+                         S_Issuer_Raw        => (0, 0, False),
+                         S_Subject_Raw       => (0, 0, False),
+                         S_Permitted_Subtrees => (0, 0, False),
+                         S_Excluded_Subtrees  => (0, 0, False),
                          S_Serial            => (0, 0, False),
                          S_TBS               => (0, 0, False),
                          Validity_Not_Before => (others => 0),
@@ -2482,9 +2803,11 @@ is
                          Has_Extensions       => False,
                          Sig_Algo_2           => Algo_Unknown,
                          S_Auth_Key_ID       => (0, 0, False),
+                         S_AKID_Serial       => (0, 0, False),
                          S_Subject_Key_ID    => (0, 0, False),
                          SANs                => (others => (0, 0, False)),
                          SAN_Num             => 0,
+                         SAN_Has_Email       => False,
                          Bad_Ext_Criticality => False,
                          Bad_Serial          => False,
                          Bad_Time_Format     => False,
@@ -2503,6 +2826,8 @@ is
                          Bad_AKID            => False,
                          Bad_Subject_Encoding => False,
                          Bad_EKU_Content     => False,
+                         Ext_Has_EKU         => False,
+                         EKU_Has_Any         => False,
                          Bad_CRL_DP          => False,
                          SAN_Critical_With_Subject => False,
                          V3_UniqueID_NoExts  => False);
@@ -2535,6 +2860,9 @@ is
       begin
          Parse_Sequence (DER, Pos, Issuer_Len, Valid);
          if not Valid then Cert := C; OK := False; return; end if;
+         C.S_Issuer_Raw := (First   => Pos,
+                            Last    => Pos + Issuer_Len - 1,
+                            Present => Issuer_Len > 0);
          Parse_Name (DER, Pos, Issuer_Len,
                      C.S_Issuer_CN, C.S_Issuer_Org, C.S_Issuer_Country,
                      Dummy_Enc, Valid);
@@ -2547,13 +2875,14 @@ is
       --  Subject (SEQUENCE of RDN SETs)
       if Pos > DER'Last then Cert := C; OK := False; return; end if;
       declare
-         Subject_Len   : N32;
-         Subject_Start : N32;
+         Subject_Len : N32;
       begin
          Parse_Sequence (DER, Pos, Subject_Len, Valid);
          if not Valid then Cert := C; OK := False; return; end if;
          C.Has_Subject := (Subject_Len > 0);
-         Subject_Start := Pos;
+         C.S_Subject_Raw := (First   => Pos,
+                             Last    => Pos + Subject_Len - 1,
+                             Present => Subject_Len > 0);
          Parse_Name (DER, Pos, Subject_Len,
                      C.S_Subject_CN, C.S_Subject_Org, C.S_Subject_Country,
                      C.Bad_Subject_Encoding, Valid);
@@ -2645,6 +2974,7 @@ is
      ((Cert.Ext_Key_Usage and 16#0200#) /= 0);
 
    function Authority_Key_ID (Cert : Certificate) return Span is (Cert.S_Auth_Key_ID);
+   function AKID_Serial (Cert : Certificate) return Span is (Cert.S_AKID_Serial);
    function Subject_Key_ID   (Cert : Certificate) return Span is (Cert.S_Subject_Key_ID);
 
    function Serial (Cert : Certificate) return Span is (Cert.S_Serial);
@@ -2891,6 +3221,9 @@ is
    function Has_V3_UniqueID_NoExts (Cert : Certificate) return Boolean is
      (Cert.V3_UniqueID_NoExts);
 
+   function Has_Path_Len_Without_CA (Cert : Certificate) return Boolean is
+     (Cert.Ext_Has_Path_Len and then not Cert.Ext_Is_CA);
+
    function Is_Structurally_Valid
      (Cert : Certificate;
       Now  : Date_Time) return Boolean
@@ -2952,6 +3285,18 @@ is
 
       --  Basic Constraints must be critical for CAs (RFC 5280 Section 4.2.1.9)
       if Cert.Ext_Is_CA and then not Cert.Ext_Basic_Crit then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2.1.9: pathLen only when cA is TRUE
+      if Cert.Ext_Has_Path_Len and then not Cert.Ext_Is_CA then
+         return False;
+      end if;
+
+      --  RFC 5280 §4.2.1.6: if only identity is email, subject must be empty
+      if Cert.SAN_Has_Email and then Cert.SAN_Num = 0
+         and then Cert.Has_Subject
+      then
          return False;
       end if;
 
@@ -3067,5 +3412,393 @@ is
 
       return True;
    end Is_Structurally_Valid;
+
+   --================================================================
+   --  Chain validation functions
+   --================================================================
+
+   function Issuer_Matches
+     (Cert       : Certificate;
+      Cert_DER   : Byte_Seq;
+      Issuer     : Certificate;
+      Issuer_DER : Byte_Seq) return Boolean
+   is
+      Cert_Issuer : constant Span := Cert.S_Issuer_Raw;
+      Issuer_Subj : constant Span := Issuer.S_Subject_Raw;
+      Len         : N32;
+   begin
+      if not Cert_Issuer.Present or not Issuer_Subj.Present then
+         return False;
+      end if;
+      Len := Span_Length (Cert_Issuer);
+      if Len /= Span_Length (Issuer_Subj) then
+         return False;
+      end if;
+      if Len = 0 then
+         return True;
+      end if;
+      if not Can_Read (Cert_DER, Cert_Issuer.First, Len) then
+         return False;
+      end if;
+      if not Can_Read (Issuer_DER, Issuer_Subj.First, Len) then
+         return False;
+      end if;
+      for I in N32 range 0 .. Len - 1 loop
+         pragma Loop_Invariant (Cert_Issuer.First + I <= Cert_DER'Last);
+         pragma Loop_Invariant (Issuer_Subj.First + I <= Issuer_DER'Last);
+         if Cert_DER (Cert_Issuer.First + I) /=
+            Issuer_DER (Issuer_Subj.First + I)
+         then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Issuer_Matches;
+
+   function Issuer_May_Sign (Issuer : Certificate) return Boolean is
+   begin
+      --  If issuer has no Key Usage extension, signing is implicitly allowed
+      if not Issuer.Ext_Has_Key_Usage then
+         return True;
+      end if;
+      --  keyCertSign bit (bit 5 from MSB = 0x0400 in our 16-bit representation)
+      return (Issuer.Ext_Key_Usage and 16#0400#) /= 0;
+   end Issuer_May_Sign;
+
+   function Issuer_EKU_Allows_Signing (Issuer : Certificate) return Boolean is
+   begin
+      --  No EKU means unrestricted
+      if not Issuer.Ext_Has_EKU then
+         return True;
+      end if;
+      --  anyExtendedKeyUsage allows everything
+      if Issuer.EKU_Has_Any then
+         return True;
+      end if;
+      --  EKU is present and doesn't include anyEKU —
+      --  cert is restricted to the listed purposes.
+      --  For a CA that signs certs, this is too restrictive.
+      return False;
+   end Issuer_EKU_Allows_Signing;
+
+   function Satisfies_Name_Constraints
+     (Cert       : Certificate;
+      Cert_DER   : Byte_Seq;
+      Issuer     : Certificate;
+      Issuer_DER : Byte_Seq) return Boolean
+   is
+      --  Case-insensitive lower-case conversion for a Byte
+      function To_Lower (B : Byte) return Byte is
+        (if B in 16#41# .. 16#5A# then B + 16#20# else B);
+
+      --  Check if a cert DNS name (in Cert_DER) ends with a constraint
+      --  DNS name (in Issuer_DER).  Per RFC 5280, "example.com" matches
+      --  "example.com" exactly, and "foo.example.com" matches because
+      --  it ends with ".example.com".
+      function DNS_Matches_Constraint
+        (DNS_Span   : Span;
+         Cons_First : N32;
+         Cons_Len   : N32) return Boolean
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+                  and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         DNS_Len : constant N32 := Span_Length (DNS_Span);
+      begin
+         if DNS_Len = 0 or Cons_Len = 0 then
+            return False;
+         end if;
+         if not Can_Read (Cert_DER, DNS_Span.First, DNS_Len) then
+            return False;
+         end if;
+         if not Can_Read (Issuer_DER, Cons_First, Cons_Len) then
+            return False;
+         end if;
+
+         --  Exact length match: compare directly
+         if DNS_Len = Cons_Len then
+            for I in N32 range 0 .. DNS_Len - 1 loop
+               pragma Loop_Invariant (DNS_Span.First + I <= Cert_DER'Last);
+               pragma Loop_Invariant (Cons_First + I <= Issuer_DER'Last);
+               if To_Lower (Cert_DER (DNS_Span.First + I)) /=
+                  To_Lower (Issuer_DER (Cons_First + I))
+               then
+                  return False;
+               end if;
+            end loop;
+            return True;
+         end if;
+
+         --  DNS name must be longer than constraint and end with
+         --  "." + constraint.  E.g. DNS="foo.example.com", constraint=
+         --  "example.com" => check DNS ends with ".example.com".
+         if DNS_Len <= Cons_Len then
+            return False;
+         end if;
+         --  The byte just before the suffix must be '.'
+         declare
+            Suffix_Start : constant N32 := DNS_Span.First + DNS_Len - Cons_Len;
+            Dot_Pos      : constant N32 := Suffix_Start - 1;
+         begin
+            if Dot_Pos < Cert_DER'First or Dot_Pos > Cert_DER'Last then
+               return False;
+            end if;
+            if Cert_DER (Dot_Pos) /= 16#2E# then  --  '.'
+               return False;
+            end if;
+            --  Compare suffix
+            for I in N32 range 0 .. Cons_Len - 1 loop
+               pragma Loop_Invariant (Suffix_Start + I <= Cert_DER'Last);
+               pragma Loop_Invariant (Cons_First + I <= Issuer_DER'Last);
+               if To_Lower (Cert_DER (Suffix_Start + I)) /=
+                  To_Lower (Issuer_DER (Cons_First + I))
+               then
+                  return False;
+               end if;
+            end loop;
+            return True;
+         end;
+      end DNS_Matches_Constraint;
+
+      --  Walk a subtrees span in Issuer_DER and check if any dNSName
+      --  entry matches the given cert DNS SAN entry.
+      --  Returns True if at least one dNSName constraint in the subtrees
+      --  matches the cert DNS name.
+      function Any_DNS_Constraint_Matches
+        (Subtrees : Span;
+         DNS_Span : Span) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+                  and Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+      is
+         P     : N32;
+         S_End : N32;
+         OK    : Boolean := True;
+      begin
+         if not Subtrees.Present then
+            return False;
+         end if;
+         P := Subtrees.First;
+         S_End := Subtrees.Last + 1;
+         --  Walk GeneralSubtree SEQUENCE entries
+         while OK and then P < S_End and then P <= Issuer_DER'Last loop
+            pragma Loop_Invariant
+              (Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last);
+            pragma Loop_Invariant (P >= Issuer_DER'First and P < S_End);
+            pragma Loop_Variant (Decreases => S_End - P);
+            --  Each GeneralSubtree is a SEQUENCE
+            if Issuer_DER (P) /= TAG_SEQUENCE then
+               exit;
+            end if;
+            declare
+               GS_Len  : N32;
+               GS_End  : N32;
+               GS_OK   : Boolean := True;
+               GS_P    : N32;
+            begin
+               GS_P := P + 1;
+               if GS_P > Issuer_DER'Last then exit; end if;
+               Parse_Length (Issuer_DER, GS_P, GS_Len, GS_OK);
+               if not GS_OK or else not Can_Read (Issuer_DER, GS_P, GS_Len)
+               then
+                  exit;
+               end if;
+               GS_End := GS_P + GS_Len;
+               --  Ensure forward progress
+               if GS_End <= P then exit; end if;
+               --  First element is GeneralName base.
+               --  dNSName has tag 0x82 (context tag 2, primitive).
+               if GS_P <= Issuer_DER'Last
+                  and then Issuer_DER (GS_P) = 16#82#
+               then
+                  declare
+                     DN_Len : N32;
+                     DN_OK  : Boolean := True;
+                     DN_P   : N32 := GS_P + 1;
+                  begin
+                     if DN_P <= Issuer_DER'Last then
+                        Parse_Length (Issuer_DER, DN_P, DN_Len, DN_OK);
+                        if DN_OK and then DN_Len > 0
+                           and then Can_Read (Issuer_DER, DN_P, DN_Len)
+                        then
+                           if DNS_Matches_Constraint
+                                (DNS_Span, DN_P, DN_Len)
+                           then
+                              return True;
+                           end if;
+                        end if;
+                     end if;
+                  end;
+               end if;
+               --  Advance past this GeneralSubtree
+               P := GS_End;
+            end;
+         end loop;
+         return False;
+      end Any_DNS_Constraint_Matches;
+
+      --  Check if a subtrees span contains any dNSName entries at all
+      function Has_DNS_Constraints (Subtrees : Span) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         P     : N32;
+         S_End : N32;
+         OK    : Boolean := True;
+      begin
+         if not Subtrees.Present then
+            return False;
+         end if;
+         P := Subtrees.First;
+         S_End := Subtrees.Last + 1;
+         while OK and then P < S_End and then P <= Issuer_DER'Last loop
+            pragma Loop_Invariant
+              (Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last);
+            pragma Loop_Invariant (P >= Issuer_DER'First and P < S_End);
+            pragma Loop_Variant (Decreases => S_End - P);
+            if Issuer_DER (P) /= TAG_SEQUENCE then
+               exit;
+            end if;
+            declare
+               GS_Len : N32;
+               GS_OK  : Boolean := True;
+               GS_P   : N32;
+            begin
+               GS_P := P + 1;
+               if GS_P > Issuer_DER'Last then exit; end if;
+               Parse_Length (Issuer_DER, GS_P, GS_Len, GS_OK);
+               if not GS_OK or else not Can_Read (Issuer_DER, GS_P, GS_Len)
+               then
+                  exit;
+               end if;
+               --  Ensure forward progress
+               if GS_P + GS_Len <= P then exit; end if;
+               if GS_P <= Issuer_DER'Last
+                  and then Issuer_DER (GS_P) = 16#82#
+               then
+                  return True;
+               end if;
+               P := GS_P + GS_Len;
+            end;
+         end loop;
+         return False;
+      end Has_DNS_Constraints;
+
+      --  Check if subtrees contain non-DNS constraint types
+      --  (email 0x81, dirName 0xA4, URI 0x86, IP 0x87)
+      function Has_Non_DNS_Constraints (Subtrees : Span) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         P     : N32;
+         S_End : N32;
+         OK    : Boolean := True;
+      begin
+         if not Subtrees.Present then
+            return False;
+         end if;
+         P := Subtrees.First;
+         S_End := Subtrees.Last + 1;
+         while OK and then P < S_End and then P <= Issuer_DER'Last loop
+            pragma Loop_Invariant
+              (Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last);
+            pragma Loop_Invariant (P >= Issuer_DER'First and P < S_End);
+            pragma Loop_Variant (Decreases => S_End - P);
+            if Issuer_DER (P) /= TAG_SEQUENCE then
+               exit;
+            end if;
+            declare
+               GS_Len : N32;
+               GS_OK  : Boolean := True;
+               GS_P   : N32;
+            begin
+               GS_P := P + 1;
+               if GS_P > Issuer_DER'Last then exit; end if;
+               Parse_Length (Issuer_DER, GS_P, GS_Len, GS_OK);
+               if not GS_OK or else not Can_Read (Issuer_DER, GS_P, GS_Len)
+               then
+                  exit;
+               end if;
+               if GS_P + GS_Len <= P then exit; end if;
+               if GS_P <= Issuer_DER'Last
+                  and then Issuer_DER (GS_P) in
+                     16#81# | 16#86# | 16#87# | 16#A4#
+               then
+                  return True;
+               end if;
+               P := GS_P + GS_Len;
+            end;
+         end loop;
+         return False;
+      end Has_Non_DNS_Constraints;
+
+   begin  --  Satisfies_Name_Constraints
+      --  If issuer has no name constraints, everything is allowed
+      if not Issuer.S_Permitted_Subtrees.Present
+         and not Issuer.S_Excluded_Subtrees.Present
+      then
+         return True;
+      end if;
+
+      --  RFC 5280 §4.2.1.10: if excluded subtrees contain types
+      --  we don't fully check (email, URI, dirName, IP),
+      --  conservatively reject.
+      if Issuer.S_Excluded_Subtrees.Present
+         and then Has_Non_DNS_Constraints (Issuer.S_Excluded_Subtrees)
+      then
+         return False;
+      end if;
+
+      --  Check excluded subtrees: cert DNS names must NOT match any
+      if Issuer.S_Excluded_Subtrees.Present then
+         for I in 1 .. Cert.SAN_Num loop
+            if I <= Max_SANs and then Cert.SANs (I).Present then
+               if Any_DNS_Constraint_Matches
+                    (Issuer.S_Excluded_Subtrees, Cert.SANs (I))
+               then
+                  return False;
+               end if;
+            end if;
+         end loop;
+         --  Also check Subject CN against excluded
+         if Cert.S_Subject_CN.Present then
+            if Any_DNS_Constraint_Matches
+                 (Issuer.S_Excluded_Subtrees, Cert.S_Subject_CN)
+            then
+               return False;
+            end if;
+         end if;
+      end if;
+
+      --  Check permitted subtrees: if there are DNS constraints in
+      --  permittedSubtrees, at least one cert DNS name must match
+      if Issuer.S_Permitted_Subtrees.Present
+         and then Has_DNS_Constraints (Issuer.S_Permitted_Subtrees)
+      then
+         --  Check SAN DNS names
+         declare
+            Any_Match : Boolean := False;
+         begin
+            for I in 1 .. Cert.SAN_Num loop
+               if I <= Max_SANs and then Cert.SANs (I).Present then
+                  if Any_DNS_Constraint_Matches
+                       (Issuer.S_Permitted_Subtrees, Cert.SANs (I))
+                  then
+                     Any_Match := True;
+                  end if;
+               end if;
+            end loop;
+            --  Also check Subject CN
+            if not Any_Match and then Cert.S_Subject_CN.Present then
+               if Any_DNS_Constraint_Matches
+                    (Issuer.S_Permitted_Subtrees, Cert.S_Subject_CN)
+               then
+                  Any_Match := True;
+               end if;
+            end if;
+            if not Any_Match then
+               return False;
+            end if;
+         end;
+      end if;
+
+      return True;
+   end Satisfies_Name_Constraints;
 
 end X509;
