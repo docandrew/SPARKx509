@@ -146,6 +146,11 @@ is
    with Pre => Index >= 1 and Index <= SAN_Count (Cert)
                and SAN_Count (Cert) <= Max_SANs;
 
+   function IP_SAN_Count (Cert : Certificate) return Natural;
+   function IP_SAN       (Cert : Certificate; Index : Positive) return Span
+   with Pre => Index >= 1 and Index <= IP_SAN_Count (Cert)
+               and IP_SAN_Count (Cert) <= Max_SANs;
+
    --================================================================
    --  Public key getters (self-contained, copied during parse)
    --================================================================
@@ -261,6 +266,12 @@ is
    --  Check if the issuer's EKU (if present) is compatible with cert signing.
    --  RFC 5280 §4.2.1.12: if EKU present, must not restrict to non-signing.
    function Issuer_EKU_Allows_Signing (Issuer : Certificate) return Boolean;
+
+   --  Check if the cert has EKU with id-kp-serverAuth (for TLS server validation).
+   function Has_EKU_Server_Auth (Cert : Certificate) return Boolean;
+   function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean;
+   function Has_EKU (Cert : Certificate) return Boolean;
+   function Is_EKU_Critical (Cert : Certificate) return Boolean;
 
    --  Check if the cert satisfies the issuer's name constraints.
    --  Returns True if no name constraints or all constraints satisfied.
@@ -476,10 +487,14 @@ private
       S_AKID_Serial        : Span;
       S_Subject_Key_ID     : Span;
 
-      --  Subject Alternative Names
+      --  Subject Alternative Names (DNS)
       SANs                 : SAN_Array     := (others => (0, 0, False));
       SAN_Num              : Natural       := 0;
       SAN_Has_Email        : Boolean       := False;
+
+      --  Subject Alternative Names (IP address: 4 bytes IPv4, 16 bytes IPv6)
+      IP_SANs              : SAN_Array     := (others => (0, 0, False));
+      IP_SAN_Num           : Natural       := 0;
 
       --  RFC 5280 validation flags
       Bad_Ext_Criticality  : Boolean       := False;
@@ -502,6 +517,8 @@ private
       Bad_EKU_Content      : Boolean       := False;
       Ext_Has_EKU          : Boolean       := False;
       EKU_Has_Any          : Boolean       := False;
+      EKU_Has_Server_Auth  : Boolean       := False;
+      EKU_Is_Critical      : Boolean       := False;
       Bad_CRL_DP           : Boolean       := False;
       SAN_Critical_With_Subject : Boolean  := False;
       V3_UniqueID_NoExts   : Boolean       := False;

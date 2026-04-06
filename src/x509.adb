@@ -222,6 +222,9 @@ is
    --  anyExtendedKeyUsage: 2.5.29.37.0
    OID_ANY_EKU : constant Byte_Seq (0 .. 3) :=
      (16#55#, 16#1D#, 16#25#, 16#00#);
+   --  id-kp-serverAuth: 1.3.6.1.5.5.7.3.1
+   OID_KP_SERVER_AUTH : constant Byte_Seq (0 .. 7) :=
+     (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#03#, 16#01#);
    --  Authority Information Access: 1.3.6.1.5.5.7.1.1
    OID_AIA : constant Byte_Seq (0 .. 7) :=
      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#01#, 16#01#);
@@ -671,6 +674,10 @@ is
          --  RFC 5280 §4.1.2.2: Serial must be positive (high bit clear)
          --  and must not be all zeros.
          if Len > 0 and then Can_Read (DER, Serial_Start, Len) then
+            --  RFC 5280 §4.1.2.2: serial must be at most 20 octets
+            if Len > 20 then
+               C.Bad_Serial := True;
+            end if;
             --  Negative check: first byte >= 0x80
             if DER (Serial_Start) >= 16#80# then
                C.Bad_Serial := True;
@@ -1363,6 +1370,16 @@ is
                         and then GN_Len /= 16
                      then
                         C.Bad_SAN := True;
+                     elsif Can_Read (DER, P, GN_Len)
+                        and then C.IP_SAN_Num < Max_SANs
+                     then
+                        C.IP_SAN_Num :=
+                           C.IP_SAN_Num + 1;
+                        C.IP_SANs (C.IP_SAN_Num) :=
+                          (First   => P,
+                           Last    =>
+                              P + GN_Len - 1,
+                           Present => True);
                      end if;
 
                   elsif GN_Tag in
@@ -2150,6 +2167,7 @@ is
       --  RFC 5280 §4.2.1.12: Extended Key Usage
       --  SEQUENCE of OID, each must be valid
       C.Ext_Has_EKU := True;
+      C.EKU_Is_Critical := Is_Critical;
       if P <= DER'Last
          and then DER (P) = TAG_SEQUENCE
       then
@@ -2185,6 +2203,13 @@ is
                   --  Zero-length OID is invalid
                   if EKU_OLen = 0 then
                      C.Bad_EKU_Content := True;
+                  end if;
+                  --  Track id-kp-serverAuth
+                  if OID_Match
+                       (DER, EKU_Start, EKU_OLen,
+                        OID_KP_SERVER_AUTH)
+                  then
+                     C.EKU_Has_Server_Auth := True;
                   end if;
                   --  Track anyExtendedKeyUsage
                   if OID_Match
@@ -2569,8 +2594,10 @@ is
                elsif OID_Match
                   (DER, OID_Start, OID_Len, OID_POLICY_CONS)
                then
-                  --  Note: RFC 5280 says MUST be critical (issuance req).
-                  --  We don't reject non-critical — PKITS tests 43/44/46.
+                  --  RFC 5280 §4.2.1.11: PolicyConstraints MUST be critical
+                  if not Is_Critical then
+                     C.Bad_Ext_Criticality := True;
+                  end if;
                   --  RFC 5280 §4.2.1.11: MUST NOT be empty sequence
                   if Val_Len = 2
                      and then Pos <= DER'Last
@@ -2804,6 +2831,8 @@ is
                          SANs                => (others => (0, 0, False)),
                          SAN_Num             => 0,
                          SAN_Has_Email       => False,
+                         IP_SANs             => (others => (0, 0, False)),
+                         IP_SAN_Num          => 0,
                          Bad_Ext_Criticality => False,
                          Bad_Serial          => False,
                          Bad_Time_Format     => False,
@@ -2824,6 +2853,8 @@ is
                          Bad_EKU_Content     => False,
                          Ext_Has_EKU         => False,
                          EKU_Has_Any         => False,
+                         EKU_Has_Server_Auth => False,
+                         EKU_Is_Critical     => False,
                          Bad_CRL_DP          => False,
                          SAN_Critical_With_Subject => False,
                          V3_UniqueID_NoExts  => False);
@@ -2936,6 +2967,11 @@ is
    function SAN_Count (Cert : Certificate) return Natural is (Cert.SAN_Num);
    function SAN_DNS   (Cert : Certificate; Index : Positive) return Span is
      (Cert.SANs (Index));
+
+   function IP_SAN_Count (Cert : Certificate) return Natural is
+     (Cert.IP_SAN_Num);
+   function IP_SAN (Cert : Certificate; Index : Positive) return Span is
+     (Cert.IP_SANs (Index));
 
    function PK_Algorithm  (Cert : Certificate) return Algorithm_ID is (Cert.PK_Algo);
    function PK_Length      (Cert : Certificate) return N32 is (Cert.PK_Buf_Len);
@@ -3111,20 +3147,114 @@ is
          end if;
       end Span_Matches;
 
+      --  Check if Hostname looks like an IPv4 address (digits and dots only)
+      function Is_IPv4_String return Boolean is
+      begin
+         if Hostname'Length < 7 or Hostname'Length > 15 then
+            return False;
+         end if;
+         for I in Hostname'Range loop
+            if Hostname (I) not in '0' .. '9' | '.' then
+               return False;
+            end if;
+         end loop;
+         return True;
+      end Is_IPv4_String;
+
+      --  Parse IPv4 string "a.b.c.d" to 4 bytes.
+      --  Returns True on success with IP_Bytes filled.
+      procedure Parse_IPv4
+        (IP_Bytes : out Byte_Seq;
+         OK       : out Boolean)
+      with Pre => IP_Bytes'First = 0 and IP_Bytes'Length = 4
+      is
+         Octet : Natural := 0;
+         B_Idx : N32 := 0;
+      begin
+         IP_Bytes := (others => 0);
+         OK := False;
+         for I in Hostname'Range loop
+            pragma Loop_Invariant (Octet <= 255);
+            pragma Loop_Invariant (B_Idx <= 3);
+            if Hostname (I) = '.' then
+               if Octet > 255 then return; end if;
+               if B_Idx > 2 then return; end if;
+               IP_Bytes (B_Idx) := Byte (Octet);
+               B_Idx := B_Idx + 1;
+               Octet := 0;
+            elsif Hostname (I) in '0' .. '9' then
+               Octet := Octet * 10 +
+                  (Character'Pos (Hostname (I)) - Character'Pos ('0'));
+               if Octet > 255 then return; end if;
+            else
+               return;
+            end if;
+         end loop;
+         if Octet > 255 or B_Idx /= 3 then return; end if;
+         IP_Bytes (3) := Byte (Octet);
+         OK := True;
+      end Parse_IPv4;
+
+      --  Match an IP SAN span (4 bytes for IPv4) against parsed IP
+      function IP_SAN_Matches (S : Span; Expected : Byte_Seq) return Boolean
+      with Pre => DER'First = 0 and DER'Last < N32'Last
+                  and Expected'First = 0 and Expected'Length = 4
+      is
+         Len : constant N32 := Span_Length (S);
+      begin
+         if not S.Present or Len /= 4 then
+            return False;
+         end if;
+         if not Can_Read (DER, S.First, 4) then
+            return False;
+         end if;
+         for I in N32 range 0 .. 3 loop
+            pragma Loop_Invariant (S.First + I <= DER'Last);
+            if DER (S.First + I) /= Expected (I) then
+               return False;
+            end if;
+         end loop;
+         return True;
+      end IP_SAN_Matches;
+
    begin  --  Matches_Hostname
       if not Cert.Valid_Flag then
          return False;
       end if;
 
-      --  First check SANs (preferred per RFC 6125)
+      --  If hostname is an IPv4 address, match against IP SANs only
+      if Is_IPv4_String then
+         declare
+            IP4 : Byte_Seq (0 .. 3);
+            Parse_OK : Boolean;
+         begin
+            Parse_IPv4 (IP4, Parse_OK);
+            if not Parse_OK then
+               return False;
+            end if;
+            for I in 1 .. Cert.IP_SAN_Num loop
+               if I <= Max_SANs
+                  and then IP_SAN_Matches (Cert.IP_SANs (I), IP4)
+               then
+                  return True;
+               end if;
+            end loop;
+            return False;
+         end;
+      end if;
+
+      --  DNS hostname: check DNS SANs (preferred per RFC 6125)
       for I in 1 .. Cert.SAN_Num loop
          if I <= Max_SANs and then Span_Matches (Cert.SANs (I)) then
             return True;
          end if;
       end loop;
 
-      --  Fall back to Subject CN only if no SANs present
-      if Cert.SAN_Num = 0 and then Cert.S_Subject_CN.Present then
+      --  Fall back to Subject CN only if NO SANs at all (DNS or IP)
+      if Cert.SAN_Num = 0
+         and then Cert.IP_SAN_Num = 0
+         and then Cert.S_Subject_CN.Present
+      then
          return Span_Matches (Cert.S_Subject_CN);
       end if;
 
@@ -3817,6 +3947,18 @@ is
       return False;
    end Issuer_EKU_Allows_Signing;
 
+   function Has_EKU_Server_Auth (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_Server_Auth);
+
+   function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_Any);
+
+   function Has_EKU (Cert : Certificate) return Boolean is
+     (Cert.Ext_Has_EKU);
+
+   function Is_EKU_Critical (Cert : Certificate) return Boolean is
+     (Cert.EKU_Is_Critical);
+
    function Satisfies_Name_Constraints
      (Cert       : Certificate;
       Cert_DER   : Byte_Seq;
@@ -4017,9 +4159,167 @@ is
          return False;
       end Has_DNS_Constraints;
 
-      --  Check if subtrees contain non-DNS constraint types
-      --  (email 0x81, dirName 0xA4, URI 0x86, IP 0x87)
-      function Has_Non_DNS_Constraints (Subtrees : Span) return Boolean
+      --  Check if an IP SAN (4 or 16 bytes) matches an IP name constraint
+      --  (8 or 32 bytes: IP address || network mask).
+      --  Match: (SAN_IP[i] AND mask[i]) == (constraint_IP[i] AND mask[i])
+      function IP_Matches_Constraint
+        (IP_Span    : Span;
+         Cons_First : N32;
+         Cons_Len   : N32) return Boolean
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+                  and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         IP_Len : constant N32 := Span_Length (IP_Span);
+      begin
+         --  IPv4 SAN (4) matches IPv4 constraint (8)
+         --  IPv6 SAN (16) matches IPv6 constraint (32)
+         if not ((IP_Len = 4 and Cons_Len = 8)
+                 or (IP_Len = 16 and Cons_Len = 32))
+         then
+            return False;
+         end if;
+         if not Can_Read (Cert_DER, IP_Span.First, IP_Len) then
+            return False;
+         end if;
+         if not Can_Read (Issuer_DER, Cons_First, Cons_Len) then
+            return False;
+         end if;
+         --  Compare: (SAN[i] & mask[i]) == (constraint[i] & mask[i])
+         for I in N32 range 0 .. IP_Len - 1 loop
+            pragma Loop_Invariant (IP_Span.First + I <= Cert_DER'Last);
+            pragma Loop_Invariant (Cons_First + I <= Issuer_DER'Last);
+            pragma Loop_Invariant (Cons_First + IP_Len + I <= Issuer_DER'Last);
+            declare
+               Mask : constant Byte :=
+                  Issuer_DER (Cons_First + IP_Len + I);
+            begin
+               if (Cert_DER (IP_Span.First + I) and Mask) /=
+                  (Issuer_DER (Cons_First + I) and Mask)
+               then
+                  return False;
+               end if;
+            end;
+         end loop;
+         return True;
+      end IP_Matches_Constraint;
+
+      --  Walk subtrees and check if any iPAddress constraint matches
+      --  the given cert IP SAN.
+      function Any_IP_Constraint_Matches
+        (Subtrees : Span;
+         IP_Span  : Span) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+                  and Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+      is
+         P     : N32;
+         S_End : N32;
+         OK    : Boolean := True;
+      begin
+         if not Subtrees.Present then
+            return False;
+         end if;
+         P := Subtrees.First;
+         S_End := Subtrees.Last + 1;
+         while OK and then P < S_End and then P <= Issuer_DER'Last loop
+            pragma Loop_Invariant
+              (Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last);
+            pragma Loop_Invariant
+              (Cert_DER'First = 0 and Cert_DER'Last < N32'Last);
+            pragma Loop_Invariant (P >= Issuer_DER'First and P < S_End);
+            pragma Loop_Variant (Decreases => S_End - P);
+            if Issuer_DER (P) /= TAG_SEQUENCE then
+               exit;
+            end if;
+            declare
+               GS_Len : N32;
+               GS_OK  : Boolean := True;
+               GS_P   : N32;
+            begin
+               GS_P := P + 1;
+               if GS_P > Issuer_DER'Last then exit; end if;
+               Parse_Length (Issuer_DER, GS_P, GS_Len, GS_OK);
+               if not GS_OK or else not Can_Read (Issuer_DER, GS_P, GS_Len)
+               then
+                  exit;
+               end if;
+               if GS_P + GS_Len <= P then exit; end if;
+               --  iPAddress has tag 0x87 (context tag 7, primitive)
+               if GS_P <= Issuer_DER'Last
+                  and then Issuer_DER (GS_P) = 16#87#
+               then
+                  declare
+                     IP_Len_Val : N32;
+                     IP_OK  : Boolean := True;
+                     IP_P   : N32 := GS_P + 1;
+                  begin
+                     if IP_P <= Issuer_DER'Last then
+                        Parse_Length (Issuer_DER, IP_P, IP_Len_Val, IP_OK);
+                        if IP_OK and then IP_Len_Val > 0
+                           and then Can_Read (Issuer_DER, IP_P, IP_Len_Val)
+                        then
+                           if IP_Matches_Constraint
+                                (IP_Span, IP_P, IP_Len_Val)
+                           then
+                              return True;
+                           end if;
+                        end if;
+                     end if;
+                  end;
+               end if;
+               P := GS_P + GS_Len;
+            end;
+         end loop;
+         return False;
+      end Any_IP_Constraint_Matches;
+
+      --  Check if subtrees contain any iPAddress constraints
+      function Has_IP_Constraints (Subtrees : Span) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         P     : N32;
+         S_End : N32;
+         OK    : Boolean := True;
+      begin
+         if not Subtrees.Present then
+            return False;
+         end if;
+         P := Subtrees.First;
+         S_End := Subtrees.Last + 1;
+         while OK and then P < S_End and then P <= Issuer_DER'Last loop
+            pragma Loop_Invariant
+              (Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last);
+            pragma Loop_Invariant (P >= Issuer_DER'First and P < S_End);
+            pragma Loop_Variant (Decreases => S_End - P);
+            if Issuer_DER (P) /= TAG_SEQUENCE then
+               exit;
+            end if;
+            declare
+               GS_Len : N32;
+               GS_OK  : Boolean := True;
+               GS_P   : N32;
+            begin
+               GS_P := P + 1;
+               if GS_P > Issuer_DER'Last then exit; end if;
+               Parse_Length (Issuer_DER, GS_P, GS_Len, GS_OK);
+               if not GS_OK or else not Can_Read (Issuer_DER, GS_P, GS_Len)
+               then
+                  exit;
+               end if;
+               if GS_P + GS_Len <= P then exit; end if;
+               if GS_P <= Issuer_DER'Last
+                  and then Issuer_DER (GS_P) = 16#87#
+               then
+                  return True;
+               end if;
+               P := GS_P + GS_Len;
+            end;
+         end loop;
+         return False;
+      end Has_IP_Constraints;
+
+      --  Check if subtrees contain non-DNS/non-IP constraint types
+      --  (email 0x81, dirName 0xA4, URI 0x86)
+      function Has_Other_Constraints (Subtrees : Span) return Boolean
       with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
       is
          P     : N32;
@@ -4054,7 +4354,7 @@ is
                if GS_P + GS_Len <= P then exit; end if;
                if GS_P <= Issuer_DER'Last
                   and then Issuer_DER (GS_P) in
-                     16#81# | 16#86# | 16#87# | 16#A4#
+                     16#81# | 16#86# | 16#A4#
                then
                   return True;
                end if;
@@ -4062,7 +4362,7 @@ is
             end;
          end loop;
          return False;
-      end Has_Non_DNS_Constraints;
+      end Has_Other_Constraints;
 
    begin  --  Satisfies_Name_Constraints
       --  If issuer has no name constraints, everything is allowed
@@ -4073,10 +4373,17 @@ is
       end if;
 
       --  RFC 5280 §4.2.1.10: if excluded subtrees contain types
-      --  we don't fully check (email, URI, dirName, IP),
+      --  we don't fully check (email, URI, dirName),
       --  conservatively reject.
       if Issuer.S_Excluded_Subtrees.Present
-         and then Has_Non_DNS_Constraints (Issuer.S_Excluded_Subtrees)
+         and then Has_Other_Constraints (Issuer.S_Excluded_Subtrees)
+      then
+         return False;
+      end if;
+
+      --  Likewise for permitted subtrees with unsupported types
+      if Issuer.S_Permitted_Subtrees.Present
+         and then Has_Other_Constraints (Issuer.S_Permitted_Subtrees)
       then
          return False;
       end if;
@@ -4092,22 +4399,38 @@ is
                end if;
             end if;
          end loop;
-         --  Also check Subject CN against excluded
-         if Cert.S_Subject_CN.Present then
+         --  Check Subject CN against excluded DNS only when no SANs
+         --  (modern WebPKI: when SAN exists, CN is ignored for NC)
+         if Cert.SAN_Num = 0
+            and then Cert.IP_SAN_Num = 0
+            and then Cert.S_Subject_CN.Present
+         then
             if Any_DNS_Constraint_Matches
                  (Issuer.S_Excluded_Subtrees, Cert.S_Subject_CN)
             then
                return False;
             end if;
          end if;
+         --  Check IP SANs against excluded IP constraints
+         for I in 1 .. Cert.IP_SAN_Num loop
+            if I <= Max_SANs and then Cert.IP_SANs (I).Present then
+               if Any_IP_Constraint_Matches
+                    (Issuer.S_Excluded_Subtrees, Cert.IP_SANs (I))
+               then
+                  return False;
+               end if;
+            end if;
+         end loop;
       end if;
 
-      --  Check permitted subtrees: if there are DNS constraints in
-      --  permittedSubtrees, at least one cert DNS name must match
+      --  Check permitted subtrees: if there are DNS constraints AND
+      --  the cert has DNS names, at least one must match.
+      --  (RFC 5280 §4.2.1.10: constraints only apply to name types
+      --  present in the cert.)
       if Issuer.S_Permitted_Subtrees.Present
          and then Has_DNS_Constraints (Issuer.S_Permitted_Subtrees)
+         and then Cert.SAN_Num > 0
       then
-         --  Check SAN DNS names
          declare
             Any_Match : Boolean := False;
          begin
@@ -4120,14 +4443,32 @@ is
                   end if;
                end if;
             end loop;
-            --  Also check Subject CN
-            if not Any_Match and then Cert.S_Subject_CN.Present then
-               if Any_DNS_Constraint_Matches
-                    (Issuer.S_Permitted_Subtrees, Cert.S_Subject_CN)
-               then
-                  Any_Match := True;
-               end if;
+            if not Any_Match then
+               return False;
             end if;
+         end;
+      end if;
+
+      --  Check permitted subtrees: if there are IP constraints AND
+      --  the cert has IP SANs, at least one must match.
+      --  (RFC 5280 §4.2.1.10: constraints only apply to name types
+      --  present in the cert.)
+      if Issuer.S_Permitted_Subtrees.Present
+         and then Has_IP_Constraints (Issuer.S_Permitted_Subtrees)
+         and then Cert.IP_SAN_Num > 0
+      then
+         declare
+            Any_Match : Boolean := False;
+         begin
+            for I in 1 .. Cert.IP_SAN_Num loop
+               if I <= Max_SANs and then Cert.IP_SANs (I).Present then
+                  if Any_IP_Constraint_Matches
+                       (Issuer.S_Permitted_Subtrees, Cert.IP_SANs (I))
+                  then
+                     Any_Match := True;
+                  end if;
+               end if;
+            end loop;
             if not Any_Match then
                return False;
             end if;
