@@ -239,6 +239,14 @@ is
       Hostname : String) return Boolean
    with Pre => DER'First = 0 and DER'Last < N32'Last;
 
+   --  CABF BR 7.1.4.3: if the cert has a Subject CN, it must be a
+   --  byte-for-byte copy of a SAN dNSName or iPAddress value.
+   --  Returns True if CN is absent, or if CN matches a SAN entry.
+   function CN_In_SAN
+     (Cert : Certificate;
+      DER  : Byte_Seq) return Boolean
+   with Pre => DER'First = 0 and DER'Last < N32'Last;
+
    --================================================================
    --  Chain validation (structural checks between issuer and subject)
    --================================================================
@@ -491,6 +499,7 @@ private
       SANs                 : SAN_Array     := (others => (0, 0, False));
       SAN_Num              : Natural       := 0;
       SAN_Has_Email        : Boolean       := False;
+      SAN_Has_Other_Name   : Boolean       := False;
 
       --  Subject Alternative Names (IP address: 4 bytes IPv4, 16 bytes IPv6)
       IP_SANs              : SAN_Array     := (others => (0, 0, False));

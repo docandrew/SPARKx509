@@ -1194,6 +1194,11 @@ is
          C.SAN_Critical_With_Subject := True;
       end if;
       --  SAN: SEQUENCE of GeneralName
+      if P > DER'Last or else DER (P) /= TAG_SEQUENCE then
+         --  SAN extension present but not a valid SEQUENCE
+         C.Bad_SAN := True;
+         return;
+      end if;
       if P <= DER'Last
          and then DER (P) = TAG_SEQUENCE
       then
@@ -1234,6 +1239,10 @@ is
                      elsif Can_Read
                         (DER, P, GN_Len)
                      then
+                        --  Leading dot is invalid
+                        if DER (P) = 16#2E# then
+                           C.Bad_SAN := True;
+                        end if;
                         --  Validate DNS chars
                         for J in N32 range
                            0 .. GN_Len - 1
@@ -1382,9 +1391,12 @@ is
                            Present => True);
                      end if;
 
+                  elsif GN_Tag = 16#A0# then
+                     --  otherName
+                     C.SAN_Has_Other_Name := True;
+
                   elsif GN_Tag in
-                     16#A0#            --  otherName
-                     | 16#83#          --  x400Address
+                     16#83#            --  x400Address
                      | 16#A4#          --  directoryName
                      | 16#A5#          --  ediPartyName
                      | 16#88#          --  registeredID
@@ -2587,6 +2599,13 @@ is
                                  end if;
                               end;
                            end if;
+                           --  RFC 5280 §4.2.1.10: NameConstraints MUST
+                           --  have at least one non-empty subtree.
+                           if not C.S_Permitted_Subtrees.Present
+                              and not C.S_Excluded_Subtrees.Present
+                           then
+                              C.Bad_Ext_Content := True;
+                           end if;
                         end if;
                      end;
                   end if;
@@ -2831,6 +2850,7 @@ is
                          SANs                => (others => (0, 0, False)),
                          SAN_Num             => 0,
                          SAN_Has_Email       => False,
+                         SAN_Has_Other_Name  => False,
                          IP_SANs             => (others => (0, 0, False)),
                          IP_SAN_Num          => 0,
                          Bad_Ext_Criticality => False,
@@ -3260,6 +3280,58 @@ is
 
       return False;
    end Matches_Hostname;
+
+   function CN_In_SAN
+     (Cert : Certificate;
+      DER  : Byte_Seq) return Boolean
+   is
+      CN : constant Span := Cert.S_Subject_CN;
+   begin
+      --  No CN => trivially satisfied
+      if not CN.Present or CN.Last < CN.First then
+         return True;
+      end if;
+      declare
+         CN_Len : constant N32 := CN.Last - CN.First + 1;
+      begin
+         if not Can_Read (DER, CN.First, CN_Len) then
+            return True;  --  can't read CN, don't enforce
+         end if;
+         --  Check against each DNS SAN (byte-for-byte)
+         for I in 1 .. Cert.SAN_Num loop
+            if I <= Max_SANs and then Cert.SANs (I).Present then
+               declare
+                  S     : constant Span := Cert.SANs (I);
+                  S_Len : constant N32 := Span_Length (S);
+               begin
+                  if S_Len = CN_Len
+                     and then Can_Read (DER, S.First, S_Len)
+                  then
+                     declare
+                        Match : Boolean := True;
+                     begin
+                        for J in N32 range 0 .. CN_Len - 1 loop
+                           pragma Loop_Invariant
+                             (CN.First + J <= DER'Last);
+                           pragma Loop_Invariant
+                             (S.First + J <= DER'Last);
+                           if DER (CN.First + J) /= DER (S.First + J) then
+                              Match := False;
+                              exit;
+                           end if;
+                        end loop;
+                        if Match then
+                           return True;
+                        end if;
+                     end;
+                  end if;
+               end;
+            end if;
+         end loop;
+         --  No SAN matched
+         return False;
+      end;
+   end CN_In_SAN;
 
    function Has_Unknown_Critical_Extension (Cert : Certificate) return Boolean is
      (Cert.Ext_Unknown_Critical);
@@ -3973,6 +4045,10 @@ is
       --  DNS name (in Issuer_DER).  Per RFC 5280, "example.com" matches
       --  "example.com" exactly, and "foo.example.com" matches because
       --  it ends with ".example.com".
+      --  Also handles wildcard SANs: "*.example.com" matches constraint
+      --  "example.com" and any constraint that is a subdomain of
+      --  "example.com" (e.g. "bar.example.com"), because the wildcard
+      --  could expand to match such names.
       function DNS_Matches_Constraint
         (DNS_Span   : Span;
          Cons_First : N32;
@@ -3989,6 +4065,70 @@ is
             return False;
          end if;
          if not Can_Read (Issuer_DER, Cons_First, Cons_Len) then
+            return False;
+         end if;
+
+         --  Handle wildcard SANs: "*.example.com"
+         --  The wildcard base domain is "example.com" (after "*.")
+         --  It matches:
+         --    - constraint "example.com" (exact base)
+         --    - constraint "foo.example.com" (subdomain of base)
+         --    - constraint "example.com" as a suffix (base is under
+         --      the constraint)
+         if DNS_Len >= 3
+            and then Cert_DER (DNS_Span.First) = 16#2A#      --  '*'
+            and then Cert_DER (DNS_Span.First + 1) = 16#2E#  --  '.'
+         then
+            declare
+               --  Base = everything after "*."
+               Base_First : constant N32 := DNS_Span.First + 2;
+               Base_Len   : constant N32 := DNS_Len - 2;
+               Base_Span  : constant Span :=
+                  (First => Base_First, Last => Base_First + Base_Len - 1,
+                   Present => True);
+            begin
+               --  Recursively check: does "example.com" match the constraint?
+               --  This handles both "example.com" == constraint and
+               --  "example.com" as subdomain of constraint.
+               if DNS_Matches_Constraint (Base_Span, Cons_First, Cons_Len) then
+                  return True;
+               end if;
+               --  Also check reverse: is the constraint a subdomain of the
+               --  base?  E.g. constraint "bar.example.com" ends with
+               --  ".example.com" — meaning the wildcard could expand to it.
+               if Cons_Len > Base_Len and then Base_Len > 0 then
+                  declare
+                     Suffix_Start : constant N32 :=
+                        Cons_First + Cons_Len - Base_Len;
+                     Dot_Pos      : constant N32 := Suffix_Start - 1;
+                  begin
+                     if Dot_Pos >= Issuer_DER'First
+                        and then Dot_Pos <= Issuer_DER'Last
+                        and then Issuer_DER (Dot_Pos) = 16#2E#
+                     then
+                        declare
+                           Match : Boolean := True;
+                        begin
+                           for I in N32 range 0 .. Base_Len - 1 loop
+                              pragma Loop_Invariant
+                                (Suffix_Start + I <= Issuer_DER'Last);
+                              pragma Loop_Invariant
+                                (Base_First + I <= Cert_DER'Last);
+                              if To_Lower (Issuer_DER (Suffix_Start + I)) /=
+                                 To_Lower (Cert_DER (Base_First + I))
+                              then
+                                 Match := False;
+                                 exit;
+                              end if;
+                           end loop;
+                           if Match then
+                              return True;
+                           end if;
+                        end;
+                     end if;
+                  end;
+               end if;
+            end;
             return False;
          end if;
 
@@ -4317,6 +4457,53 @@ is
          return False;
       end Has_IP_Constraints;
 
+      --  Check if subtrees contain a specific GeneralName tag
+      function Has_Tag_In_Subtrees
+        (Subtrees : Span;
+         Tag      : Byte) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         P     : N32;
+         S_End : N32;
+         OK    : Boolean := True;
+      begin
+         if not Subtrees.Present then
+            return False;
+         end if;
+         P := Subtrees.First;
+         S_End := Subtrees.Last + 1;
+         while OK and then P < S_End and then P <= Issuer_DER'Last loop
+            pragma Loop_Invariant
+              (Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last);
+            pragma Loop_Invariant (P >= Issuer_DER'First and P < S_End);
+            pragma Loop_Variant (Decreases => S_End - P);
+            if Issuer_DER (P) /= TAG_SEQUENCE then
+               exit;
+            end if;
+            declare
+               GS_Len : N32;
+               GS_OK  : Boolean := True;
+               GS_P   : N32;
+            begin
+               GS_P := P + 1;
+               if GS_P > Issuer_DER'Last then exit; end if;
+               Parse_Length (Issuer_DER, GS_P, GS_Len, GS_OK);
+               if not GS_OK or else not Can_Read (Issuer_DER, GS_P, GS_Len)
+               then
+                  exit;
+               end if;
+               if GS_P + GS_Len <= P then exit; end if;
+               if GS_P <= Issuer_DER'Last
+                  and then Issuer_DER (GS_P) = Tag
+               then
+                  return True;
+               end if;
+               P := GS_P + GS_Len;
+            end;
+         end loop;
+         return False;
+      end Has_Tag_In_Subtrees;
+
       --  Check if subtrees contain non-DNS/non-IP constraint types
       --  (email 0x81, dirName 0xA4, URI 0x86)
       function Has_Other_Constraints (Subtrees : Span) return Boolean
@@ -4372,6 +4559,21 @@ is
          return True;
       end if;
 
+      --  RFC 5280 §4.2.1.10: if the cert has otherName SANs and
+      --  the NC has otherName constraints, conservatively reject
+      --  (we can't match otherName values).
+      if Cert.SAN_Has_Other_Name then
+         if (Issuer.S_Excluded_Subtrees.Present
+               and then Has_Tag_In_Subtrees
+                 (Issuer.S_Excluded_Subtrees, 16#A0#))
+            or (Issuer.S_Permitted_Subtrees.Present
+                  and then Has_Tag_In_Subtrees
+                    (Issuer.S_Permitted_Subtrees, 16#A0#))
+         then
+            return False;
+         end if;
+      end if;
+
       --  RFC 5280 §4.2.1.10: if excluded subtrees contain types
       --  we don't fully check (email, URI, dirName),
       --  conservatively reject.
@@ -4424,55 +4626,41 @@ is
       end if;
 
       --  Check permitted subtrees: if there are DNS constraints AND
-      --  the cert has DNS names, at least one must match.
-      --  (RFC 5280 §4.2.1.10: constraints only apply to name types
-      --  present in the cert.)
+      --  the cert has DNS names, EVERY DNS name must match at least
+      --  one permitted constraint.
+      --  (RFC 5280 §4.2.1.10: all names of the constrained type must
+      --  fall within the permitted subtrees.)
       if Issuer.S_Permitted_Subtrees.Present
          and then Has_DNS_Constraints (Issuer.S_Permitted_Subtrees)
          and then Cert.SAN_Num > 0
       then
-         declare
-            Any_Match : Boolean := False;
-         begin
-            for I in 1 .. Cert.SAN_Num loop
-               if I <= Max_SANs and then Cert.SANs (I).Present then
-                  if Any_DNS_Constraint_Matches
-                       (Issuer.S_Permitted_Subtrees, Cert.SANs (I))
-                  then
-                     Any_Match := True;
-                  end if;
+         for I in 1 .. Cert.SAN_Num loop
+            if I <= Max_SANs and then Cert.SANs (I).Present then
+               if not Any_DNS_Constraint_Matches
+                    (Issuer.S_Permitted_Subtrees, Cert.SANs (I))
+               then
+                  return False;
                end if;
-            end loop;
-            if not Any_Match then
-               return False;
             end if;
-         end;
+         end loop;
       end if;
 
       --  Check permitted subtrees: if there are IP constraints AND
-      --  the cert has IP SANs, at least one must match.
-      --  (RFC 5280 §4.2.1.10: constraints only apply to name types
-      --  present in the cert.)
+      --  the cert has IP SANs, EVERY IP SAN must match at least one
+      --  permitted constraint.
       if Issuer.S_Permitted_Subtrees.Present
          and then Has_IP_Constraints (Issuer.S_Permitted_Subtrees)
          and then Cert.IP_SAN_Num > 0
       then
-         declare
-            Any_Match : Boolean := False;
-         begin
-            for I in 1 .. Cert.IP_SAN_Num loop
-               if I <= Max_SANs and then Cert.IP_SANs (I).Present then
-                  if Any_IP_Constraint_Matches
-                       (Issuer.S_Permitted_Subtrees, Cert.IP_SANs (I))
-                  then
-                     Any_Match := True;
-                  end if;
+         for I in 1 .. Cert.IP_SAN_Num loop
+            if I <= Max_SANs and then Cert.IP_SANs (I).Present then
+               if not Any_IP_Constraint_Matches
+                    (Issuer.S_Permitted_Subtrees, Cert.IP_SANs (I))
+               then
+                  return False;
                end if;
-            end loop;
-            if not Any_Match then
-               return False;
             end if;
-         end;
+         end loop;
       end if;
 
       return True;
