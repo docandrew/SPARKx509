@@ -3292,8 +3292,11 @@ is
          return True;
       end if;
       declare
-         CN_Len : constant N32 := CN.Last - CN.First + 1;
+         CN_Len : constant N32 := Span_Length (CN);
       begin
+         if CN_Len = 0 then
+            return True;
+         end if;
          if not Can_Read (DER, CN.First, CN_Len) then
             return True;  --  can't read CN, don't enforce
          end if;
@@ -3312,9 +3315,9 @@ is
                      begin
                         for J in N32 range 0 .. CN_Len - 1 loop
                            pragma Loop_Invariant
-                             (CN.First + J <= DER'Last);
+                             (CN_Len <= DER'Last - CN.First + 1);
                            pragma Loop_Invariant
-                             (S.First + J <= DER'Last);
+                             (CN_Len <= DER'Last - S.First + 1);
                            if DER (CN.First + J) /= DER (S.First + J) then
                               Match := False;
                               exit;
@@ -4054,7 +4057,8 @@ is
          Cons_First : N32;
          Cons_Len   : N32) return Boolean
       with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
-                  and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+                  and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last,
+           Subprogram_Variant => (Decreases => Span_Length (DNS_Span))
       is
          DNS_Len : constant N32 := Span_Length (DNS_Span);
       begin
