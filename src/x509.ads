@@ -140,6 +140,9 @@ is
    --================================================================
 
    Max_SANs : constant := 16;
+   --  TODO: Google certs have 137+ DNS SANs but increasing this
+   --  bloats Certificate (and thus Cert_Pool/Root_Pool) significantly.
+   --  Need to decouple SAN storage from the Certificate record.
 
    function SAN_Count (Cert : Certificate) return Natural;
    function SAN_DNS   (Cert : Certificate; Index : Positive) return Span
@@ -498,6 +501,10 @@ private
       --  Subject Alternative Names (DNS)
       SANs                 : SAN_Array     := (others => (0, 0, False));
       SAN_Num              : Natural       := 0;
+      SAN_Ext_Value        : Span          := (0, 0, False);
+      --  Span of the full SAN extension SEQUENCE OF value in DER.
+      --  Used by Matches_Hostname to iterate all SANs directly
+      --  from DER when SAN_Num exceeds Max_SANs.
       SAN_Has_Email        : Boolean       := False;
       SAN_Has_Other_Name   : Boolean       := False;
 

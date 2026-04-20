@@ -88,6 +88,19 @@ is
       Parse_Length (DER, Pos, Len, OK);
    end Parse_Sequence;
 
+   --  Parse and skip past a SEQUENCE header (discard length)
+   procedure Enter_Sequence
+     (DER : in     Byte_Seq;
+      Pos : in out N32;
+      OK  : in out Boolean)
+   with Pre => OK and DER'First = 0 and Pos <= DER'Last and DER'Last < N32'Last
+   is
+      pragma Warnings (Off, """Len"" is set by ""Parse_Sequence"" but not used");
+      Len : N32;
+   begin
+      Parse_Sequence (DER, Pos, Len, OK);
+   end Enter_Sequence;
+
    --  Parse an explicit tag + length (e.g., [0] EXPLICIT, [3] EXPLICIT)
    procedure Parse_Explicit_Tag
      (DER      : in     Byte_Seq;
@@ -530,7 +543,7 @@ is
       T    :    out Date_Time;
       OK   : in out Boolean)
    is
-      Y, M, D, Hr, Mn, Sc : Natural := 0;
+      Y, M, D, Hr, Mn, Sc : Natural;
       Bad : Boolean := False;
 
       type Month_Days is array (1 .. 12) of Natural;
@@ -734,7 +747,9 @@ is
       if not Valid then return; end if;
       Sig_Seq_End := Pos + Sig_Seq_Len;
       if Pos <= DER'Last then
+         pragma Warnings (Off, """Pos"" is set by ""Parse_Algorithm_OID"" but not used after the call");
          Parse_Algorithm_OID (DER, Pos, C.Sig_Algo, Valid);
+         pragma Warnings (On, """Pos"" is set by ""Parse_Algorithm_OID"" but not used after the call");
       end if;
       Pos := Sig_Seq_End;  --  skip any parameters
    end Parse_TBS_Sig_Algorithm;
@@ -747,7 +762,6 @@ is
       Valid : in out Boolean)
    with Pre => DER'First = 0 and DER'Last < N32'Last
    is
-      Val_Len : N32;
       T_Tag   : Byte;
       T_Len   : N32;
 
@@ -793,7 +807,7 @@ is
       if not Valid then return; end if;
       if Pos > DER'Last then Valid := False; return; end if;
 
-      Parse_Sequence (DER, Pos, Val_Len, Valid);
+      Enter_Sequence (DER, Pos, Valid);
       if not Valid then return; end if;
 
       --  notBefore
@@ -870,7 +884,7 @@ is
       Algo_Len    : N32;
       Algo_End    : N32;
       PK_Algo_ID  : Algorithm_ID := Algo_Unknown;
-      Curve_Algo  : Algorithm_ID := Algo_Unknown;
+      Curve_Algo  : Algorithm_ID;
       BStr_Len    : N32;
       Unused_Bits : Byte;
    begin
@@ -955,11 +969,10 @@ is
          --  RSA key: BIT STRING contains SEQUENCE { modulus INTEGER, exponent INTEGER }
          if Pos <= DER'Last and then DER (Pos) = TAG_SEQUENCE then
             declare
-               RSA_Len : N32;
                Mod_Len : N32;
                Exp_Len : N32;
             begin
-               Parse_Sequence (DER, Pos, RSA_Len, Valid);
+               Enter_Sequence (DER, Pos, Valid);
                if Valid and then Pos <= DER'Last and then DER (Pos) = TAG_INTEGER then
                   Pos := Pos + 1;
                   if Pos <= DER'Last then
@@ -1030,18 +1043,24 @@ is
                                               Unsigned_32 (DER (Pos + I));
                            end loop;
                         end;
+                        pragma Warnings (Off, """Pos"" is set by ""Skip"" but not used");
                         Skip (DER, Pos, Exp_Len, Valid);
+                        pragma Warnings (On, """Pos"" is set by ""Skip"" but not used");
                      end if;
                   end if;
                end if;
             end;
          else
+            pragma Warnings (Off, """Pos"" is set by ""Skip"" but not used");
             Skip (DER, Pos, BStr_Len, Valid);
+            pragma Warnings (On, """Pos"" is set by ""Skip"" but not used");
          end if;
       else
          --  EC / Ed25519: raw key bytes in BIT STRING
          Copy_Bytes (DER, Pos, BStr_Len, C.PK_Buf, C.PK_Buf_Len);
+         pragma Warnings (Off, """Pos"" is set by ""Skip"" but not used");
          Skip (DER, Pos, BStr_Len, Valid);
+         pragma Warnings (On, """Pos"" is set by ""Skip"" but not used");
       end if;
 
       Pos := SPKI_End;
@@ -1207,6 +1226,11 @@ is
             Can_Read (DER, P, Inner_Len)
          then
             Inner_End := P + Inner_Len;
+            --  Store the full SAN extension value span for
+            --  Matches_Hostname to iterate all SANs from DER
+            --  (handles certs with > Max_SANs entries).
+            C.SAN_Ext_Value := (First => P, Last => Inner_End - 1,
+                                Present => Inner_Len > 0);
             --  RFC 5280 4.2.1.6: empty SAN
             if Inner_Len = 0 then
                C.Bad_SAN := True;
@@ -1490,8 +1514,10 @@ is
                         C.Ext_Has_Path_Len := True;
                         C.Ext_Path_Len :=
                           Natural (DER (P));
+                        pragma Warnings (Off, """P"" is set by ""Skip"" but not used");
                         Skip
                           (DER, P, PL_Len, Valid);
+                        pragma Warnings (On, """P"" is set by ""Skip"" but not used");
                      end if;
                   end;
                end if;
@@ -2379,8 +2405,10 @@ is
          return;
       end if;
 
+      pragma Warnings (Off, """Ext_Tag_Len"" is set by ""Parse_Explicit_Tag"" but not used");
       Parse_Explicit_Tag (DER, Pos, TAG_EXTENSIONS, Ext_Tag_Len,
                            Ext_Found, Valid);
+      pragma Warnings (On, """Ext_Tag_Len"" is set by ""Parse_Explicit_Tag"" but not used");
       if not (Valid and then Ext_Found) then return; end if;
 
       C.Has_Extensions := True;
@@ -2763,7 +2791,9 @@ is
             if Valid then
                SA2_End := Pos + SA2_Len;
                if Pos <= DER'Last then
+                  pragma Warnings (Off, """Pos"" is set by ""Parse_Algorithm_OID"" but not used");
                   Parse_Algorithm_OID (DER, Pos, SA2_Algo, Valid);
+                  pragma Warnings (On, """Pos"" is set by ""Parse_Algorithm_OID"" but not used");
                   C.Sig_Algo_2 := SA2_Algo;
                end if;
                Pos := SA2_End;  --  skip past entire algo sequence
@@ -2801,7 +2831,6 @@ is
       OK   :    out Boolean)
    is
       Pos       : N32 := 0;
-      Len       : N32;
       TBS_Start : N32;
       TBS_Len   : N32;
       Valid     : Boolean := True;
@@ -2849,6 +2878,7 @@ is
                          S_Subject_Key_ID    => (0, 0, False),
                          SANs                => (others => (0, 0, False)),
                          SAN_Num             => 0,
+                         SAN_Ext_Value       => (0, 0, False),
                          SAN_Has_Email       => False,
                          SAN_Has_Other_Name  => False,
                          IP_SANs             => (others => (0, 0, False)),
@@ -2881,7 +2911,7 @@ is
 
       --  Outer SEQUENCE (Certificate)
       if Pos > DER'Last then Cert := C; OK := False; return; end if;
-      Parse_Sequence (DER, Pos, Len, Valid);
+      Enter_Sequence (DER, Pos, Valid);
       if not Valid then Cert := C; OK := False; return; end if;
 
       --  TBS Certificate SEQUENCE
@@ -2959,7 +2989,9 @@ is
       end if;
 
       --  Outer Signature Algorithm + Signature Value
+      pragma Warnings (Off, """Pos"" is set by ""Parse_Outer_Sig_And_Value"" but not used");
       Parse_Outer_Sig_And_Value (DER, Pos, C, Valid);
+      pragma Warnings (On, """Pos"" is set by ""Parse_Outer_Sig_And_Value"" but not used");
 
       C.Valid_Flag := Valid;
       Cert := C;
@@ -3263,12 +3295,64 @@ is
          end;
       end if;
 
-      --  DNS hostname: check DNS SANs (preferred per RFC 6125)
+      --  DNS hostname: check stored SANs first (fast path)
       for I in 1 .. Cert.SAN_Num loop
          if I <= Max_SANs and then Span_Matches (Cert.SANs (I)) then
             return True;
          end if;
       end loop;
+
+      --  If we have more SANs than Max_SANs, walk the raw DER
+      --  extension to find all dNSName entries.
+      if Cert.SAN_Num >= Max_SANs
+         and then Cert.SAN_Ext_Value.Present
+         and then Can_Read (DER, Cert.SAN_Ext_Value.First,
+                            Cert.SAN_Ext_Value.Last -
+                               Cert.SAN_Ext_Value.First + 1)
+      then
+         declare
+            P   : N32 := Cert.SAN_Ext_Value.First;
+            E   : constant N32 := Cert.SAN_Ext_Value.Last;
+         begin
+            while P < E and then P <= DER'Last loop
+               declare
+                  Tag : constant Byte := DER (P);
+                  GN_Len : N32;
+               begin
+                  P := P + 1;
+                  --  Parse length
+                  if P > DER'Last then exit; end if;
+                  if DER (P) < 16#80# then
+                     GN_Len := N32 (DER (P));
+                     P := P + 1;
+                  elsif DER (P) = 16#81# and then P + 1 <= DER'Last then
+                     GN_Len := N32 (DER (P + 1));
+                     P := P + 2;
+                  elsif DER (P) = 16#82# and then P + 2 <= DER'Last then
+                     GN_Len := N32 (DER (P + 1)) * 256 +
+                                N32 (DER (P + 2));
+                     P := P + 3;
+                  else
+                     exit;
+                  end if;
+
+                  --  Tag 0x82 = context [2] = dNSName
+                  if Tag = 16#82# and then GN_Len > 0
+                     and then P + GN_Len - 1 <= DER'Last
+                  then
+                     if Span_Matches ((First   => P,
+                                       Last    => P + GN_Len - 1,
+                                       Present => True))
+                     then
+                        return True;
+                     end if;
+                  end if;
+
+                  P := P + GN_Len;
+               end;
+            end loop;
+         end;
+      end if;
 
       --  Fall back to Subject CN only if NO SANs at all (DNS or IP)
       if Cert.SAN_Num = 0
@@ -3942,10 +4026,14 @@ is
                Old_P1 : constant N32 := P1;
                Old_P2 : constant N32 := P2;
             begin
+               pragma Warnings (Off, """SE1"" is set by ""Next_ATV"" but not used");
                Next_ATV (Cert_DER, P1, E1,
                          OID_S1, OID_L1, VT1, VS1, VL1, SE1, OK1);
+               pragma Warnings (On, """SE1"" is set by ""Next_ATV"" but not used");
+               pragma Warnings (Off, """SE2"" is set by ""Next_ATV"" but not used");
                Next_ATV (Issuer_DER, P2, E2,
                          OID_S2, OID_L2, VT2, VS2, VL2, SE2, OK2);
+               pragma Warnings (On, """SE2"" is set by ""Next_ATV"" but not used");
 
                if not OK1 or not OK2 then
                   return False;
@@ -4016,9 +4104,14 @@ is
       if Issuer.EKU_Has_Any then
          return True;
       end if;
-      --  EKU is present and doesn't include anyEKU —
-      --  cert is restricted to the listed purposes.
-      --  For a CA that signs certs, this is too restrictive.
+      --  RFC 5280 Section 4.2.1.12: If EKU is present on a CA cert,
+      --  it constrains what the CA can sign. A CA with serverAuth
+      --  or clientAuth EKU can sign TLS certs. Google, Let's Encrypt,
+      --  and other major CAs commonly include these on intermediates.
+      if Issuer.EKU_Has_Server_Auth then
+         return True;
+      end if;
+      --  EKU present but no recognized signing-related purpose
       return False;
    end Issuer_EKU_Allows_Signing;
 
