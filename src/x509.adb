@@ -3257,6 +3257,130 @@ is
          OK := True;
       end Parse_IPv4;
 
+      --  Check if Hostname looks like an IPv6 address (hex digits and colons)
+      function Is_IPv6_String return Boolean is
+      begin
+         if Hostname'Length < 2 or Hostname'Length > 39 then
+            return False;
+         end if;
+         --  Must contain at least one colon
+         declare
+            Has_Colon : Boolean := False;
+         begin
+            for I in Hostname'Range loop
+               if Hostname (I) = ':' then
+                  Has_Colon := True;
+               elsif Hostname (I) not in '0' .. '9' | 'a' .. 'f'
+                                        | 'A' .. 'F'
+               then
+                  return False;
+               end if;
+            end loop;
+            return Has_Colon;
+         end;
+      end Is_IPv6_String;
+
+      --  Parse IPv6 string to 16 bytes.
+      --  Supports full form (1:2:3:4:5:6:7:8) and :: compression.
+      procedure Parse_IPv6
+        (IP_Bytes : out Byte_Seq;
+         OK       : out Boolean)
+      with Pre => IP_Bytes'First = 0 and IP_Bytes'Length = 16
+      is
+         function Hex_Val (Ch : Character) return Natural is
+           (if Ch in '0' .. '9' then Character'Pos (Ch) - Character'Pos ('0')
+            elsif Ch in 'a' .. 'f' then Character'Pos (Ch) - Character'Pos ('a') + 10
+            elsif Ch in 'A' .. 'F' then Character'Pos (Ch) - Character'Pos ('A') + 10
+            else 0);
+
+         --  First pass: collect groups into a flat array of 16-bit values.
+         --  DC_Idx records where :: appeared (-1 if absent).
+         Groups  : array (0 .. 7) of Natural := (others => 0);
+         G_Count : Natural := 0;
+         DC_Idx  : Integer := -1;  --  group index where :: expands
+         Val     : Natural := 0;
+         Chars   : Natural := 0;
+         I       : Natural := Hostname'First;
+      begin
+         IP_Bytes := (others => 0);
+         OK := False;
+
+         while I <= Hostname'Last loop
+            if Hostname (I) = ':' then
+               if I < Hostname'Last and then Hostname (I + 1) = ':' then
+                  --  :: found
+                  if DC_Idx >= 0 then return; end if;  --  double :: invalid
+                  if Chars > 0 then
+                     if G_Count > 7 then return; end if;
+                     Groups (G_Count) := Val;
+                     G_Count := G_Count + 1;
+                     Val := 0; Chars := 0;
+                  end if;
+                  DC_Idx := G_Count;
+                  I := I + 2;
+               else
+                  --  single : separator
+                  if Chars = 0 then return; end if;  --  leading or double :
+                  if G_Count > 7 then return; end if;
+                  Groups (G_Count) := Val;
+                  G_Count := G_Count + 1;
+                  Val := 0; Chars := 0;
+                  I := I + 1;
+               end if;
+            elsif Hostname (I) in '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' then
+               Val := Val * 16 + Hex_Val (Hostname (I));
+               Chars := Chars + 1;
+               if Chars > 4 or Val > 65535 then return; end if;
+               I := I + 1;
+            else
+               return;
+            end if;
+         end loop;
+
+         --  Final group
+         if Chars > 0 then
+            if G_Count > 7 then return; end if;
+            Groups (G_Count) := Val;
+            G_Count := G_Count + 1;
+         end if;
+
+         if DC_Idx < 0 then
+            --  No :: : must have exactly 8 groups
+            if G_Count /= 8 then return; end if;
+         else
+            if G_Count > 8 then return; end if;
+         end if;
+
+         --  Expand into 16 bytes
+         if DC_Idx < 0 then
+            --  No compression
+            for J in 0 .. 7 loop
+               IP_Bytes (N32 (J * 2))     := Byte (Groups (J) / 256);
+               IP_Bytes (N32 (J * 2 + 1)) := Byte (Groups (J) mod 256);
+            end loop;
+         else
+            --  Left groups go at the start
+            for J in 0 .. DC_Idx - 1 loop
+               IP_Bytes (N32 (J * 2))     := Byte (Groups (J) / 256);
+               IP_Bytes (N32 (J * 2 + 1)) := Byte (Groups (J) mod 256);
+            end loop;
+            --  Right groups go at the end
+            declare
+               Right_Count : constant Natural := G_Count - DC_Idx;
+               Base        : Natural;
+            begin
+               Base := 8 - Right_Count;
+               for J in 0 .. Right_Count - 1 loop
+                  IP_Bytes (N32 ((Base + J) * 2))     :=
+                     Byte (Groups (DC_Idx + J) / 256);
+                  IP_Bytes (N32 ((Base + J) * 2 + 1)) :=
+                     Byte (Groups (DC_Idx + J) mod 256);
+               end loop;
+            end;
+         end if;
+         OK := True;
+      end Parse_IPv6;
+
       --  Match an IP SAN span (4 bytes for IPv4) against parsed IP
       function IP_SAN_Matches (S : Span; Expected : Byte_Seq) return Boolean
       with Pre => DER'First = 0 and DER'Last < N32'Last
@@ -3279,6 +3403,27 @@ is
          return True;
       end IP_SAN_Matches;
 
+      function IP6_SAN_Matches (S : Span; Expected : Byte_Seq) return Boolean
+      with Pre => DER'First = 0 and DER'Last < N32'Last
+                  and Expected'First = 0 and Expected'Length = 16
+      is
+         Len : constant N32 := Span_Length (S);
+      begin
+         if not S.Present or Len /= 16 then
+            return False;
+         end if;
+         if not Can_Read (DER, S.First, 16) then
+            return False;
+         end if;
+         for I in N32 range 0 .. 15 loop
+            pragma Loop_Invariant (S.First + I <= DER'Last);
+            if DER (S.First + I) /= Expected (I) then
+               return False;
+            end if;
+         end loop;
+         return True;
+      end IP6_SAN_Matches;
+
    begin  --  Matches_Hostname
       if not Cert.Valid_Flag then
          return False;
@@ -3297,6 +3442,27 @@ is
             for I in 1 .. Cert.IP_SAN_Num loop
                if I <= Max_SANs
                   and then IP_SAN_Matches (Cert.IP_SANs (I), IP4)
+               then
+                  return True;
+               end if;
+            end loop;
+            return False;
+         end;
+      end if;
+
+      --  If hostname is an IPv6 address, match against IP SANs only
+      if Is_IPv6_String then
+         declare
+            IP6 : Byte_Seq (0 .. 15);
+            Parse_OK : Boolean;
+         begin
+            Parse_IPv6 (IP6, Parse_OK);
+            if not Parse_OK then
+               return False;
+            end if;
+            for I in 1 .. Cert.IP_SAN_Num loop
+               if I <= Max_SANs
+                  and then IP6_SAN_Matches (Cert.IP_SANs (I), IP6)
                then
                   return True;
                end if;
@@ -4764,12 +4930,43 @@ is
          return False;
       end Has_Other_Constraints;
 
+      --  DoS budget: reject if NC × names exceeds this threshold.
+      --  2048 constraints × 2048 SANs = 4M iterations — far too many.
+      --  A reasonable real-world chain has < 100 of each.
+      Max_NC_Work : constant := 100_000;
+
+      function NC_Work_Estimate return N32 is
+         NC_Size   : N32 := 0;
+         Name_Size : N32 := 0;
+      begin
+         if Issuer.S_Permitted_Subtrees.Present then
+            NC_Size := NC_Size + Span_Length (Issuer.S_Permitted_Subtrees);
+         end if;
+         if Issuer.S_Excluded_Subtrees.Present then
+            NC_Size := NC_Size + Span_Length (Issuer.S_Excluded_Subtrees);
+         end if;
+         Name_Size := N32 (Cert.SAN_Num) + N32 (Cert.IP_SAN_Num);
+         if Cert.SAN_Ext_Value.Present then
+            Name_Size := Name_Size + Span_Length (Cert.SAN_Ext_Value);
+         end if;
+         --  Saturating multiply
+         if NC_Size > 0 and then Name_Size > Max_NC_Work / NC_Size then
+            return Max_NC_Work + 1;
+         end if;
+         return NC_Size * Name_Size;
+      end NC_Work_Estimate;
+
    begin  --  Satisfies_Name_Constraints
       --  If issuer has no name constraints, everything is allowed
       if not Issuer.S_Permitted_Subtrees.Present
          and not Issuer.S_Excluded_Subtrees.Present
       then
          return True;
+      end if;
+
+      --  DoS mitigation: reject pathologically large NC × name products
+      if NC_Work_Estimate > Max_NC_Work then
+         return False;
       end if;
 
       --  RFC 5280 §4.2.1.10: if the cert has otherName SANs and
