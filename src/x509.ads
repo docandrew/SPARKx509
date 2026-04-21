@@ -250,6 +250,20 @@ is
       DER  : Byte_Seq) return Boolean
    with Pre => DER'First = 0 and DER'Last < N32'Last;
 
+   --  RFC 5280 §4.2.1.9: Self-issued cert (issuer == subject byte-equal).
+   --  Self-issued intermediates are not counted toward pathLenConstraint.
+   function Is_Self_Issued
+     (Cert : Certificate;
+      DER  : Byte_Seq) return Boolean
+   with Pre => DER'First = 0 and DER'Last < N32'Last;
+
+   --  CABF 7.1.2.1.3: On a self-signed root, if AKI and SKI are both
+   --  present, AKI keyIdentifier must be byte-equal to SKI.
+   function AKI_Matches_SKI
+     (Cert : Certificate;
+      DER  : Byte_Seq) return Boolean
+   with Pre => DER'First = 0 and DER'Last < N32'Last;
+
    --================================================================
    --  Chain validation (structural checks between issuer and subject)
    --================================================================
@@ -334,9 +348,13 @@ is
    function Has_Bad_PubKey (Cert : Certificate) return Boolean;
    --  RFC 5280 §4.2.1.1: AKID present but missing keyIdentifier
    function Has_AKID_Missing_Key_ID (Cert : Certificate) return Boolean;
+   --  CABF 7.1.2.1.3: AKI contains authorityCertIssuer field
+   function Has_AKID_Issuer (Cert : Certificate) return Boolean;
 
    --  RFC 5280 §4.2.1.10: NameConstraints on a non-CA cert
    function Has_Name_Constraints_NonCA (Cert : Certificate) return Boolean;
+   --  RFC 5280 §4.2.1.10: NameConstraints is non-critical
+   function Has_NC_Noncritical (Cert : Certificate) return Boolean;
    --  RFC 5280 §4.2.1.14: InhibitAnyPolicy with negative value
    function Has_Bad_Inhibit_Value (Cert : Certificate) return Boolean;
 
@@ -524,7 +542,9 @@ private
       Bad_Ext_Content      : Boolean       := False;
       Bad_PubKey           : Boolean       := False;
       AKID_Missing_Key_ID  : Boolean       := False;
+      AKID_Has_Issuer      : Boolean       := False;
       Has_Name_Constraints : Boolean       := False;
+      NC_Noncritical       : Boolean       := False;
       Bad_Inhibit_Value    : Boolean       := False;
       Bad_DER              : Boolean       := False;
       Bad_Cert_Policy      : Boolean       := False;

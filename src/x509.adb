@@ -1854,6 +1854,8 @@ is
             if Has_Issuer /= Has_Serial2 then
                C.Bad_AKID := True;
             end if;
+            --  Store authorityCertIssuer presence for CABF checks
+            C.AKID_Has_Issuer := Has_Issuer;
             end;
             end if;  --  elsif Can_Read
          end if;  --  if Valid
@@ -2563,11 +2565,14 @@ is
                elsif OID_Match
                   (DER, OID_Start, OID_Len, OID_NAME_CONS)
                then
-                  --  RFC 5280 §4.2.1.10: NC SHOULD be critical, but
-                  --  validators must still process non-critical NC
-                  --  (X.509 §8.2.2.3). Don't flag as bad criticality.
+                  --  RFC 5280 §4.2.1.10: NC MUST be critical.
+                  --  We still process non-critical NC per X.509 §8.2.2.3,
+                  --  but track it so validators can reject in strict mode.
                   --  RFC 5280 §4.2.1.10: only on CA certs
                   C.Has_Name_Constraints := True;
+                  if not Is_Critical then
+                     C.NC_Noncritical := True;
+                  end if;
                   --  Parse NameConstraints SEQUENCE for subtree spans
                   if Pos <= DER'Last
                      and then DER (Pos) = TAG_SEQUENCE
@@ -2726,14 +2731,18 @@ is
                   if Is_Critical then
                      C.Bad_Ext_Criticality := True;
                   end if;
-                  --  SEQUENCE SIZE (1..MAX)
-                  if Val_Len = 2
-                     and then Pos <= DER'Last
-                     and then Pos + 1 <= DER'Last
-                     and then DER (Pos) = TAG_SEQUENCE
-                     and then DER (Pos + 1) = 0
-                  then
-                     C.Bad_Ext_Content := True;
+                  --  SEQUENCE SIZE (1..MAX) of AccessDescription
+                  if Val_Len > 0 and then Pos <= DER'Last then
+                     if DER (Pos) /= TAG_SEQUENCE then
+                        --  Value must be a SEQUENCE
+                        C.Bad_Ext_Content := True;
+                     elsif Val_Len = 2
+                        and then Pos + 1 <= DER'Last
+                        and then DER (Pos + 1) = 0
+                     then
+                        --  Empty SEQUENCE (no AccessDescriptions)
+                        C.Bad_Ext_Content := True;
+                     end if;
                   end if;
 
                elsif OID_Match
@@ -2893,7 +2902,9 @@ is
                          Bad_Ext_Content     => False,
                          Bad_PubKey          => False,
                          AKID_Missing_Key_ID => False,
+                         AKID_Has_Issuer     => False,
                          Has_Name_Constraints => False,
+                         NC_Noncritical      => False,
                          Bad_Inhibit_Value   => False,
                          Bad_DER             => False,
                          Bad_Cert_Policy     => False,
@@ -3364,6 +3375,58 @@ is
       return False;
    end Matches_Hostname;
 
+   function Is_Self_Issued
+     (Cert : Certificate;
+      DER  : Byte_Seq) return Boolean
+   is
+      Iss : constant Span := Cert.S_Issuer_Raw;
+      Sub : constant Span := Cert.S_Subject_Raw;
+   begin
+      if not Iss.Present or not Sub.Present then
+         return False;
+      end if;
+      if Span_Length (Iss) /= Span_Length (Sub) then
+         return False;
+      end if;
+      if Iss.Last > DER'Last or Sub.Last > DER'Last then
+         return False;
+      end if;
+      for I in N32 range 0 .. Span_Length (Iss) - 1 loop
+         if DER (Iss.First + I) /= DER (Sub.First + I) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Is_Self_Issued;
+
+   function AKI_Matches_SKI
+     (Cert : Certificate;
+      DER  : Byte_Seq) return Boolean
+   is
+      AKI : constant Span := Cert.S_Auth_Key_ID;
+      SKI : constant Span := Cert.S_Subject_Key_ID;
+   begin
+      --  If either is absent, nothing to compare — vacuously true
+      if not AKI.Present or not SKI.Present then
+         return True;
+      end if;
+      --  Length mismatch
+      if Span_Length (AKI) /= Span_Length (SKI) then
+         return False;
+      end if;
+      --  Bounds check
+      if AKI.Last > DER'Last or SKI.Last > DER'Last then
+         return False;
+      end if;
+      --  Byte comparison
+      for I in N32 range 0 .. Span_Length (AKI) - 1 loop
+         if DER (AKI.First + I) /= DER (SKI.First + I) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end AKI_Matches_SKI;
+
    function CN_In_SAN
      (Cert : Certificate;
       DER  : Byte_Seq) return Boolean
@@ -3523,8 +3586,14 @@ is
    function Has_AKID_Missing_Key_ID (Cert : Certificate) return Boolean is
      (Cert.AKID_Missing_Key_ID);
 
+   function Has_AKID_Issuer (Cert : Certificate) return Boolean is
+     (Cert.AKID_Has_Issuer);
+
    function Has_Name_Constraints_NonCA (Cert : Certificate) return Boolean is
      (Cert.Has_Name_Constraints and then not Cert.Ext_Is_CA);
+
+   function Has_NC_Noncritical (Cert : Certificate) return Boolean is
+     (Cert.NC_Noncritical);
 
    function Has_Bad_Inhibit_Value (Cert : Certificate) return Boolean is
      (Cert.Bad_Inhibit_Value);
