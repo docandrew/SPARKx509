@@ -2006,7 +2006,7 @@ is
       end record;
       type Ext_OID_Array is array (1 .. Max_Seen_Exts) of Ext_OID_Entry;
       Seen_Exts  : Ext_OID_Array := (others => (0, 0));
-      Seen_Count : Natural := 0;
+      Seen_Count : Natural range 0 .. Max_Seen_Exts := 0;
    begin
       if not Valid then return; end if;
       if not (Pos <= DER'Last and then C.S_TBS.Present
@@ -2065,6 +2065,7 @@ is
             --  Check for duplicate extension OID
             if OID_Len > 0 and then Can_Read (DER, OID_Start, OID_Len) then
                for J in 1 .. Seen_Count loop
+                  pragma Loop_Invariant (Seen_Count <= Max_Seen_Exts);
                   if Seen_Exts (J).Len = OID_Len
                      and then Can_Read (DER, Seen_Exts (J).Start,
                                         Seen_Exts (J).Len)
@@ -2073,6 +2074,10 @@ is
                         Match : Boolean := True;
                      begin
                         for K in N32 range 0 .. OID_Len - 1 loop
+                           pragma Loop_Invariant
+                             (OID_Start + OID_Len - 1 <= DER'Last);
+                           pragma Loop_Invariant
+                             (Seen_Exts (J).Start + OID_Len - 1 <= DER'Last);
                            if DER (OID_Start + K) /=
                               DER (Seen_Exts (J).Start + K)
                            then
@@ -2116,6 +2121,15 @@ is
                if Pos > DER'Last then Valid := False; exit; end if;
                Parse_Length (DER, Pos, Val_Len, Valid);
                if not Valid then exit; end if;
+               if not Can_Read (DER, Pos, Val_Len) then
+                  Valid := False; exit;
+               end if;
+
+               --  Save position to validate extension consumed exactly Val_Len
+               declare
+                  Val_Start : constant N32 := Pos;
+                  Val_End   : constant N32 := Pos + Val_Len;
+               begin
 
                --  RFC 5280: extension value must not be empty
                if Val_Len = 0 then
@@ -2387,7 +2401,17 @@ is
                      C.Ext_Unknown_Critical := True;
                   end if;
                end if;
+               --  Enforce extension value boundary: ensure Pos doesn't
+               --  stray beyond Val_End regardless of what the parser did.
+               --  Reject if parser overshot (read past end of OCTET STRING).
+               if Valid and then Pos > Val_End then
+                  C.Bad_Ext_Content := True;
+               end if;
+               Pos := Val_End;
+               pragma Unreferenced (Val_Start);
+               end;  --  Val_Start/Val_End declare block
             end if;
+
             end;  --  Is_Critical declare block
 
             --  Advance to next extension regardless
@@ -2544,8 +2568,21 @@ is
 
       --  Outer SEQUENCE (Certificate)
       if Pos > DER'Last then Cert := C; OK := False; return; end if;
-      Enter_Sequence (DER, Pos, Valid);
-      if not Valid then Cert := C; OK := False; return; end if;
+      declare
+         Outer_Len : N32;
+         Outer_End : N32;
+      begin
+         Parse_Sequence (DER, Pos, Outer_Len, Valid);
+         if not Valid then Cert := C; OK := False; return; end if;
+         if not Can_Read (DER, Pos, Outer_Len) then
+            Cert := C; OK := False; return;
+         end if;
+         Outer_End := Pos + Outer_Len;
+         --  Reject trailing data: outer SEQUENCE must consume entire DER
+         if Outer_End /= DER'Last + 1 then
+            Cert := C; OK := False; return;
+         end if;
+      end;
 
       --  TBS Certificate SEQUENCE
       TBS_Start := Pos;
@@ -2637,6 +2674,16 @@ is
       pragma Warnings (On, """Pos"" is set by ""Parse_Outer_Sig_And_Value"" but not used");
 
       C.Valid_Flag := Valid;
+      --  Final safety check: verify all spans are within DER range.
+      --  This is a defense-in-depth check that the prover will
+      --  eventually prove statically, making this assertion redundant.
+      if Valid and then not Spans_Valid (C, DER'Last) then
+         C.Valid_Flag := False;
+         Valid := False;
+      end if;
+      --  Note: Algorithms_Valid is NOT checked here — certs with
+      --  unknown algorithms still parse successfully. The caller
+      --  checks algorithms via Is_Structurally_Valid.
       Cert := C;
       OK := Valid;
    end Parse_Certificate;

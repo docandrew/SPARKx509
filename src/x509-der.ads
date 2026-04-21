@@ -43,8 +43,9 @@ is
       Pos : in out N32;
       Len :    out N32;
       OK  : in out Boolean)
-   with Pre => OK and DER'First = 0 and Pos <= DER'Last
-               and DER'Last < N32'Last;
+   with Pre  => OK and DER'First = 0 and Pos <= DER'Last
+                and DER'Last < N32'Last,
+        Post => (if OK then Pos > Pos'Old);
 
    procedure Parse_Sequence
      (DER : in     Byte_Seq;

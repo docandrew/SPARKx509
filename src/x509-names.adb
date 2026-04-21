@@ -25,15 +25,30 @@ is
          if not Can_Read (DER, S.First, Len) then
             return False;
          end if;
-         for I in 0 .. Natural (Len) - 1 loop
-            pragma Loop_Invariant (S.First + N32 (I) <= DER'Last);
-            pragma Loop_Invariant (Hostname'First + I <= Hostname'Last);
-            if To_Lower (DER (S.First + N32 (I))) /=
-               Char_To_Lower (Hostname (Hostname'First + I))
-            then
-               return False;
-            end if;
-         end loop;
+         --  Now: S.First + Len - 1 <= DER'Last
+         --  and  Len = N32(Hostname'Length), so Natural(Len) - 1 < Hostname'Length
+         if Len > N32 (Natural'Last) then return False; end if;
+         --  Len > 0 and Len = Hostname'Length, so Hostname is non-empty
+         pragma Assert (Hostname'Length > 0);
+         pragma Assert (Hostname'First <= Hostname'Last);
+         declare
+            H_Idx : Natural := Hostname'First;
+         begin
+            for I in N32 range 0 .. Len - 1 loop
+               pragma Loop_Invariant (S.First + Len - 1 <= DER'Last);
+               pragma Loop_Invariant
+                 (H_Idx in Hostname'First .. Hostname'Last);
+               pragma Loop_Invariant (I <= Len - 1);
+               if To_Lower (DER (S.First + I)) /=
+                  Char_To_Lower (Hostname (H_Idx))
+               then
+                  return False;
+               end if;
+               if H_Idx < Hostname'Last then
+                  H_Idx := H_Idx + 1;
+               end if;
+            end loop;
+         end;
          return True;
       end Exact_Match;
 
@@ -95,16 +110,26 @@ is
                   if not Can_Read (DER, Wild_Rest_First, Wild_Rest_Len) then
                      return False;
                   end if;
-                  for I in N32 range 0 .. Wild_Rest_Len - 1 loop
-                     pragma Loop_Invariant
-                       (Wild_Rest_First + I <= DER'Last);
-                     if To_Lower (DER (Wild_Rest_First + I)) /=
-                        Char_To_Lower
-                          (Hostname (Host_Rest_First + Natural (I)))
-                     then
-                        return False;
-                     end if;
-                  end loop;
+                  pragma Assert (Host_Rest_First <= Hostname'Last);
+                  declare
+                     H_Idx : Natural := Host_Rest_First;
+                  begin
+                     for I in N32 range 0 .. Wild_Rest_Len - 1 loop
+                        pragma Loop_Invariant
+                          (Wild_Rest_First + Wild_Rest_Len - 1 <= DER'Last);
+                        pragma Loop_Invariant
+                          (H_Idx in Host_Rest_First .. Hostname'Last);
+                        pragma Loop_Invariant (I <= Wild_Rest_Len - 1);
+                        if To_Lower (DER (Wild_Rest_First + I)) /=
+                           Char_To_Lower (Hostname (H_Idx))
+                        then
+                           return False;
+                        end if;
+                        if H_Idx < Hostname'Last then
+                           H_Idx := H_Idx + 1;
+                        end if;
+                     end loop;
+                  end;
                   return True;
                end;
             end;
@@ -163,7 +188,10 @@ is
       end Parse_IPv4;
 
       --  Check if Hostname looks like an IPv6 address (hex digits and colons)
-      function Is_IPv6_String return Boolean is
+      function Is_IPv6_String return Boolean
+      with Post => (if Is_IPv6_String'Result then
+                       Hostname'Length >= 2 and Hostname'Length <= 39)
+      is
       begin
          if Hostname'Length < 2 or Hostname'Length > 39 then
             return False;
@@ -428,31 +456,24 @@ is
             E   : constant N32 := Cert.SAN_Ext_Value.Last;
          begin
             while P < E and then P <= DER'Last loop
+               pragma Loop_Variant (Increases => P);
+               pragma Loop_Invariant (P <= DER'Last);
+               pragma Loop_Invariant (DER'Last < N32'Last);
+               pragma Loop_Invariant (P < N32'Last);
                declare
-                  Tag : constant Byte := DER (P);
-                  GN_Len : N32;
+                  Tag      : constant Byte := DER (P);
+                  GN_Len   : N32;
+                  Len_OK   : Boolean := True;
+                  Saved_P  : constant N32 := P with Ghost;
                begin
                   P := P + 1;
-                  --  Parse length
                   if P > DER'Last then exit; end if;
-                  if DER (P) < 16#80# then
-                     GN_Len := N32 (DER (P));
-                     P := P + 1;
-                  elsif DER (P) = 16#81# and then P + 1 <= DER'Last then
-                     GN_Len := N32 (DER (P + 1));
-                     P := P + 2;
-                  elsif DER (P) = 16#82# and then P + 2 <= DER'Last then
-                     GN_Len := N32 (DER (P + 1)) * 256 +
-                                N32 (DER (P + 2));
-                     P := P + 3;
-                  else
-                     exit;
-                  end if;
+                  Parse_Length (DER, P, GN_Len, Len_OK);
+                  if not Len_OK then exit; end if;
+                  if not Can_Read (DER, P, GN_Len) then exit; end if;
+                  pragma Assert (P > Saved_P);
 
-                  --  dNSName (GN_DNS_NAME)
-                  if Tag = GN_DNS_NAME and then GN_Len > 0
-                     and then P + GN_Len - 1 <= DER'Last
-                  then
+                  if Tag = GN_DNS_NAME and then GN_Len > 0 then
                      if Span_Matches ((First   => P,
                                        Last    => P + GN_Len - 1,
                                        Present => True))
@@ -481,7 +502,7 @@ is
    function Is_Self_Issued
      (Cert : Certificate;
       DER  : Byte_Seq) return Boolean
-   is (Spans_Equal (DER, Cert.S_Issuer_Raw, Cert.S_Subject_Raw));
+   is (Issuer_Matches (Cert, DER, Cert, DER));
 
    function AKI_Matches_SKI
      (Cert : Certificate;
@@ -506,14 +527,20 @@ is
       --  Case-insensitive comparison of CN span against a SAN span
       function CI_Match (SAN_First : N32; SAN_Len : N32;
                          CN_First : N32; CN_Len : N32) return Boolean
+      with Pre => DER'First = 0 and DER'Last < N32'Last
       is
       begin
+         if SAN_Len = 0 or CN_Len = 0 then return False; end if;
          if SAN_Len /= CN_Len then return False; end if;
          if not Can_Read (DER, SAN_First, SAN_Len) then return False; end if;
          if not Can_Read (DER, CN_First, CN_Len) then return False; end if;
+         --  Now: SAN_First + SAN_Len - 1 <= DER'Last
+         --  and  CN_First  + CN_Len  - 1 <= DER'Last
+         --  and  SAN_Len = CN_Len
          for J in N32 range 0 .. CN_Len - 1 loop
-            pragma Loop_Invariant (CN_First + J <= DER'Last);
-            pragma Loop_Invariant (SAN_First + J <= DER'Last);
+            pragma Loop_Invariant (J <= CN_Len - 1);
+            pragma Loop_Invariant (CN_First + CN_Len - 1 <= DER'Last);
+            pragma Loop_Invariant (SAN_First + SAN_Len - 1 <= DER'Last);
             if To_Lower (DER (CN_First + J)) /=
                To_Lower (DER (SAN_First + J))
             then
@@ -564,26 +591,23 @@ is
                E   : constant N32 := Cert.SAN_Ext_Value.Last;
             begin
                while P < E and then P <= DER'Last loop
+                  pragma Loop_Variant (Increases => P);
+                  pragma Loop_Invariant (P <= DER'Last);
+                  pragma Loop_Invariant (DER'Last < N32'Last);
+                  pragma Loop_Invariant (P < N32'Last);
                   declare
-                     Tag : constant Byte := DER (P);
-                     GN_Len : N32;
+                     Tag     : constant Byte := DER (P);
+                     GN_Len  : N32;
+                     Len_OK  : Boolean := True;
+                     Saved_P : constant N32 := P with Ghost;
                   begin
                      P := P + 1;
                      if P > DER'Last then exit; end if;
-                     if DER (P) < 16#80# then
-                        GN_Len := N32 (DER (P)); P := P + 1;
-                     elsif DER (P) = 16#81# and then P + 1 <= DER'Last then
-                        GN_Len := N32 (DER (P + 1)); P := P + 2;
-                     elsif DER (P) = 16#82# and then P + 2 <= DER'Last then
-                        GN_Len := N32 (DER (P + 1)) * 256 +
-                                   N32 (DER (P + 2)); P := P + 3;
-                     else
-                        exit;
-                     end if;
-                     --  dNSName (GN_DNS_NAME)
-                     if Tag = GN_DNS_NAME and then GN_Len > 0
-                        and then P + GN_Len - 1 <= DER'Last
-                     then
+                     Parse_Length (DER, P, GN_Len, Len_OK);
+                     if not Len_OK then exit; end if;
+                     if not Can_Read (DER, P, GN_Len) then exit; end if;
+                     pragma Assert (P > Saved_P);
+                     if Tag = GN_DNS_NAME and then GN_Len > 0 then
                         if CI_Match (P, GN_Len, CN.First, CN_Len) then
                            return True;
                         end if;
@@ -1613,6 +1637,9 @@ is
                Found_DirName : Boolean := False;
             begin
                while S_OK and then SP < SE and then SP <= Cert_DER'Last loop
+                  pragma Loop_Variant (Increases => SP);
+                  pragma Loop_Invariant (SP <= Cert_DER'Last);
+                  pragma Loop_Invariant (Cert_DER'Last < N32'Last);
                   declare
                      ST     : constant Byte := Cert_DER (SP);
                      SL     : N32;

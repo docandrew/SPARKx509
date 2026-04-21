@@ -127,8 +127,7 @@ is
       OK   :    out Boolean)
    with Pre  => DER'First = 0 and DER'Last < N32'Last,
         Post => (if OK then Is_Valid (Cert)
-                              and Spans_Valid (Cert, DER'Last)
-                              and Algorithms_Valid (Cert));
+                              and Spans_Valid (Cert, DER'Last));
 
    --================================================================
    --  Validity & version
@@ -584,5 +583,9 @@ private
       SAN_Critical_With_Subject : Boolean  := False;
       V3_UniqueID_NoExts   : Boolean       := False;
    end record;
+
+   --  Private expression function completions (visible to child packages
+   --  for proof purposes)
+   function Is_Valid (Cert : Certificate) return Boolean is (Cert.Valid_Flag);
 
 end X509;

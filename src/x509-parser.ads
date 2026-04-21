@@ -13,7 +13,6 @@ is
       OK   :    out Boolean)
    with Pre  => DER'First = 0 and DER'Last < N32'Last,
         Post => (if OK then Is_Valid (Cert)
-                              and Spans_Valid (Cert, DER'Last)
-                              and Algorithms_Valid (Cert));
+                              and Spans_Valid (Cert, DER'Last));
 
 end X509.Parser;

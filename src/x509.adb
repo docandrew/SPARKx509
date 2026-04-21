@@ -55,7 +55,7 @@ is
    --  Getter implementations (expression functions)
    --================================================================
 
-   function Is_Valid   (Cert : Certificate) return Boolean is (Cert.Valid_Flag);
+   --  Is_Valid completed in x509.ads private section
    function Version    (Cert : Certificate) return Natural is (Cert.Cert_Version);
 
    function Issuer_CN       (Cert : Certificate) return Span is (Cert.S_Issuer_CN);

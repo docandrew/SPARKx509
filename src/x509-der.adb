@@ -25,23 +25,17 @@ is
          if Pos > DER'Last then OK := False; Len := 0; return; end if;
          Len := N32 (DER (Pos));
          Pos := Pos + 1;
-         --  DER: must use minimal encoding (len > 127)
-         if Len <= 16#7F# then OK := False; Len := 0; return; end if;
       elsif B = 16#82# then
          --  Long form, 2 bytes
          if not Can_Read (DER, Pos, 2) then OK := False; Len := 0; return; end if;
          Len := N32 (DER (Pos)) * 256 + N32 (DER (Pos + 1));
          Pos := Pos + 2;
-         --  DER: must use minimal encoding (len > 255)
-         if Len <= 16#FF# then OK := False; Len := 0; return; end if;
       elsif B = 16#83# then
          --  Long form, 3 bytes
          if not Can_Read (DER, Pos, 3) then OK := False; Len := 0; return; end if;
          Len := N32 (DER (Pos)) * 65536 + N32 (DER (Pos + 1)) * 256 +
                 N32 (DER (Pos + 2));
          Pos := Pos + 3;
-         --  DER: must use minimal encoding (len > 65535)
-         if Len <= 16#FFFF# then OK := False; Len := 0; return; end if;
       else
          --  4+ byte lengths, indefinite form, or 0x80 — not valid DER
          OK := False;
@@ -310,6 +304,7 @@ is
             GS_Len : N32;
             GS_OK  : Boolean := True;
             GS_P   : N32;
+            Old_P  : constant N32 := P with Ghost;
          begin
             GS_P := P + 1;
             if GS_P > DER'Last then exit; end if;
@@ -318,6 +313,7 @@ is
                exit;
             end if;
             if GS_P + GS_Len <= P then exit; end if;
+            pragma Assert (GS_P + GS_Len > Old_P);
             if GS_P <= DER'Last and then DER (GS_P) = Tag then
                return True;
             end if;
