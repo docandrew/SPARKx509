@@ -100,6 +100,24 @@ is
    type Certificate is private;
 
    --================================================================
+   --  Span validity — proves all DER offsets are in range
+   --================================================================
+
+   --  True if a single span is within DER'Range (or not present)
+   function Span_In_Range (S : Span; DER_Last : N32) return Boolean is
+     (not S.Present or else (S.First <= DER_Last and S.Last <= DER_Last));
+
+   --  True if all spans in the certificate point within DER(0..DER_Last).
+   --  This is the central safety predicate: if Spans_Valid holds, then
+   --  every getter that resolves a span against the DER is safe.
+   function Spans_Valid
+     (Cert     : Certificate;
+      DER_Last : N32) return Boolean;
+
+   --  Algorithms are recognized (not Algo_Unknown) and match
+   function Algorithms_Valid (Cert : Certificate) return Boolean;
+
+   --================================================================
    --  Parser
    --================================================================
 
@@ -107,7 +125,10 @@ is
      (DER  : in     Byte_Seq;
       Cert :    out Certificate;
       OK   :    out Boolean)
-   with Pre => DER'First = 0 and DER'Last < N32'Last;
+   with Pre  => DER'First = 0 and DER'Last < N32'Last,
+        Post => (if OK then Is_Valid (Cert)
+                              and Spans_Valid (Cert, DER'Last)
+                              and Algorithms_Valid (Cert));
 
    --================================================================
    --  Validity & version
@@ -240,7 +261,8 @@ is
      (Cert     : Certificate;
       DER      : Byte_Seq;
       Hostname : String) return Boolean
-   with Pre => DER'First = 0 and DER'Last < N32'Last;
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+               and Spans_Valid (Cert, DER'Last);
 
    --  CABF BR 7.1.4.3: if the cert has a Subject CN, it must be a
    --  byte-for-byte copy of a SAN dNSName or iPAddress value.
@@ -248,21 +270,20 @@ is
    function CN_In_SAN
      (Cert : Certificate;
       DER  : Byte_Seq) return Boolean
-   with Pre => DER'First = 0 and DER'Last < N32'Last;
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+               and Spans_Valid (Cert, DER'Last);
 
-   --  RFC 5280 §4.2.1.9: Self-issued cert (issuer == subject byte-equal).
-   --  Self-issued intermediates are not counted toward pathLenConstraint.
    function Is_Self_Issued
      (Cert : Certificate;
       DER  : Byte_Seq) return Boolean
-   with Pre => DER'First = 0 and DER'Last < N32'Last;
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+               and Spans_Valid (Cert, DER'Last);
 
-   --  CABF 7.1.2.1.3: On a self-signed root, if AKI and SKI are both
-   --  present, AKI keyIdentifier must be byte-equal to SKI.
    function AKI_Matches_SKI
      (Cert : Certificate;
       DER  : Byte_Seq) return Boolean
-   with Pre => DER'First = 0 and DER'Last < N32'Last;
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+               and Spans_Valid (Cert, DER'Last);
 
    --================================================================
    --  Chain validation (structural checks between issuer and subject)
@@ -279,7 +300,9 @@ is
       Issuer    : Certificate;
       Issuer_DER : Byte_Seq) return Boolean
    with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
-               and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last;
+               and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+               and Spans_Valid (Cert, Cert_DER'Last)
+               and Spans_Valid (Issuer, Issuer_DER'Last);
    --  RFC 5280 §7.1: True only if both names are present and
    --  semantically equal after PrintableString/UTF8String
    --  normalization (case folding, whitespace collapsing/trimming).
@@ -307,7 +330,9 @@ is
       Issuer     : Certificate;
       Issuer_DER : Byte_Seq) return Boolean
    with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
-               and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last;
+               and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+               and Spans_Valid (Cert, Cert_DER'Last)
+               and Spans_Valid (Issuer, Issuer_DER'Last);
 
    --================================================================
    --  Structural validation getters
