@@ -2563,10 +2563,9 @@ is
                elsif OID_Match
                   (DER, OID_Start, OID_Len, OID_NAME_CONS)
                then
-                  --  RFC 5280: MUST be critical
-                  if not Is_Critical then
-                     C.Bad_Ext_Criticality := True;
-                  end if;
+                  --  RFC 5280 §4.2.1.10: NC SHOULD be critical, but
+                  --  validators must still process non-critical NC
+                  --  (X.509 §8.2.2.3). Don't flag as bad criticality.
                   --  RFC 5280 §4.2.1.10: only on CA certs
                   C.Has_Name_Constraints := True;
                   --  Parse NameConstraints SEQUENCE for subtree spans
@@ -3369,12 +3368,36 @@ is
      (Cert : Certificate;
       DER  : Byte_Seq) return Boolean
    is
+      function To_Lower (B : Byte) return Byte is
+        (if B in 16#41# .. 16#5A# then B + 16#20# else B);
+
+      --  Case-insensitive comparison of CN span against a SAN span
+      function CI_Match (SAN_First : N32; SAN_Len : N32;
+                         CN_First : N32; CN_Len : N32) return Boolean
+      is
+      begin
+         if SAN_Len /= CN_Len then return False; end if;
+         if not Can_Read (DER, SAN_First, SAN_Len) then return False; end if;
+         if not Can_Read (DER, CN_First, CN_Len) then return False; end if;
+         for J in N32 range 0 .. CN_Len - 1 loop
+            pragma Loop_Invariant (CN_First + J <= DER'Last);
+            pragma Loop_Invariant (SAN_First + J <= DER'Last);
+            if To_Lower (DER (CN_First + J)) /=
+               To_Lower (DER (SAN_First + J))
+            then
+               return False;
+            end if;
+         end loop;
+         return True;
+      end CI_Match;
+
       CN : constant Span := Cert.S_Subject_CN;
    begin
-      --  No CN => trivially satisfied
-      if not CN.Present or CN.Last < CN.First then
+      --  No CN => trivially satisfied (CABF BR 7.1.4.3)
+      if not CN.Present or else CN.Last < CN.First then
          return True;
       end if;
+
       declare
          CN_Len : constant N32 := Span_Length (CN);
       begin
@@ -3384,37 +3407,61 @@ is
          if not Can_Read (DER, CN.First, CN_Len) then
             return True;  --  can't read CN, don't enforce
          end if;
-         --  Check against each DNS SAN (byte-for-byte)
+
+         --  Check stored DNS SANs first (fast path)
          for I in 1 .. Cert.SAN_Num loop
             if I <= Max_SANs and then Cert.SANs (I).Present then
-               declare
-                  S     : constant Span := Cert.SANs (I);
-                  S_Len : constant N32 := Span_Length (S);
-               begin
-                  if S_Len = CN_Len
-                     and then Can_Read (DER, S.First, S_Len)
-                  then
-                     declare
-                        Match : Boolean := True;
-                     begin
-                        for J in N32 range 0 .. CN_Len - 1 loop
-                           pragma Loop_Invariant
-                             (CN_Len <= DER'Last - CN.First + 1);
-                           pragma Loop_Invariant
-                             (CN_Len <= DER'Last - S.First + 1);
-                           if DER (CN.First + J) /= DER (S.First + J) then
-                              Match := False;
-                              exit;
-                           end if;
-                        end loop;
-                        if Match then
-                           return True;
-                        end if;
-                     end;
-                  end if;
-               end;
+               if CI_Match (Cert.SANs (I).First,
+                            Span_Length (Cert.SANs (I)),
+                            CN.First, CN_Len)
+               then
+                  return True;
+               end if;
             end if;
          end loop;
+
+         --  Walk raw DER SAN extension for overflow SANs (>Max_SANs)
+         if Cert.SAN_Num >= Max_SANs
+            and then Cert.SAN_Ext_Value.Present
+            and then Can_Read (DER, Cert.SAN_Ext_Value.First,
+                               Cert.SAN_Ext_Value.Last -
+                                  Cert.SAN_Ext_Value.First + 1)
+         then
+            declare
+               P   : N32 := Cert.SAN_Ext_Value.First;
+               E   : constant N32 := Cert.SAN_Ext_Value.Last;
+            begin
+               while P < E and then P <= DER'Last loop
+                  declare
+                     Tag : constant Byte := DER (P);
+                     GN_Len : N32;
+                  begin
+                     P := P + 1;
+                     if P > DER'Last then exit; end if;
+                     if DER (P) < 16#80# then
+                        GN_Len := N32 (DER (P)); P := P + 1;
+                     elsif DER (P) = 16#81# and then P + 1 <= DER'Last then
+                        GN_Len := N32 (DER (P + 1)); P := P + 2;
+                     elsif DER (P) = 16#82# and then P + 2 <= DER'Last then
+                        GN_Len := N32 (DER (P + 1)) * 256 +
+                                   N32 (DER (P + 2)); P := P + 3;
+                     else
+                        exit;
+                     end if;
+                     --  Tag 0x82 = dNSName
+                     if Tag = 16#82# and then GN_Len > 0
+                        and then P + GN_Len - 1 <= DER'Last
+                     then
+                        if CI_Match (P, GN_Len, CN.First, CN_Len) then
+                           return True;
+                        end if;
+                     end if;
+                     P := P + GN_Len;
+                  end;
+               end loop;
+            end;
+         end if;
+
          --  No SAN matched
          return False;
       end;
