@@ -2407,7 +2407,6 @@ is
                if Valid and then Pos > Val_End then
                   C.Bad_Ext_Content := True;
                end if;
-               Pos := Val_End;
                pragma Unreferenced (Val_Start);
                end;  --  Val_Start/Val_End declare block
             end if;

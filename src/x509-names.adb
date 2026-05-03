@@ -1483,7 +1483,7 @@ is
 
       function NC_Work_Estimate return N32 is
          NC_Size   : N32 := 0;
-         Name_Size : N32 := 0;
+         Name_Size : N32;
       begin
          if Issuer.S_Permitted_Subtrees.Present then
             NC_Size := NC_Size + Span_Length (Issuer.S_Permitted_Subtrees);
@@ -1634,7 +1634,6 @@ is
                SP    : N32 := Cert.SAN_Ext_Value.First;
                SE    : constant N32 := Cert.SAN_Ext_Value.Last;
                S_OK  : Boolean := True;
-               Found_DirName : Boolean := False;
             begin
                while S_OK and then SP < SE and then SP <= Cert_DER'Last loop
                   pragma Loop_Variant (Increases => SP);
@@ -1653,7 +1652,6 @@ is
                      if SL_P + SL <= SP then exit; end if;
 
                      if ST = GN_DIR_NAME then
-                        Found_DirName := True;
                         --  Check excluded
                         if Issuer.S_Excluded_Subtrees.Present
                            and then Any_DirName_Constraint_Matches
