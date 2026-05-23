@@ -1112,12 +1112,37 @@ is
                   begin
                      Parse_Length
                        (DER, P, PL_Len, Valid);
-                     if Valid and then PL_Len >= 1
+                     --  Decode a small unsigned-INTEGER pathLen.
+                     --  DER (X.690) encodes INTEGER as two's-complement
+                     --  big-endian; a positive value with high bit set
+                     --  in the leading byte requires a leading 0x00.
+                     --  We cap PL_Len at 3 (max 16-bit meaningful value
+                     --  with sign byte) and reject anything larger.
+                     --  pathLen values > 255 are nonsensical for
+                     --  certificate chain depth, so a small cap is safe.
+                     if Valid and then PL_Len in 1 .. 3
                         and then P <= DER'Last
+                        and then PL_Len - 1 <= DER'Last - P
                      then
-                        C.Ext_Has_Path_Len := True;
-                        C.Ext_Path_Len :=
-                          Natural (DER (P));
+                        declare
+                           PL_Val : Natural := 0;
+                           Sign_Bit : constant Byte := DER (P) and 16#80#;
+                        begin
+                           if Sign_Bit /= 0 then
+                              --  Negative or out-of-range: reject.
+                              C.Ext_Has_Path_Len := False;
+                           else
+                              for I in N32 range 0 .. PL_Len - 1 loop
+                                 PL_Val := PL_Val * 256
+                                   + Natural (DER (P + I));
+                                 exit when PL_Val > 1024;  -- saturate
+                              end loop;
+                              if PL_Val <= 1024 then
+                                 C.Ext_Has_Path_Len := True;
+                                 C.Ext_Path_Len := PL_Val;
+                              end if;
+                           end if;
+                        end;
                         pragma Warnings (Off, """P"" is set by ""Skip"" but not used");
                         Skip
                           (DER, P, PL_Len, Valid);

@@ -811,26 +811,32 @@ is
       --  Walk a Name SEQUENCE and extract the next RDN's first ATV.
       --  P advances past the entire SET (RDN).
       --  Set_End is set so the caller can advance past multi-valued RDNs.
+      --  Multi_Valued is True iff the SET contained more than one ATV.
+      --  Multi-valued RDNs are rare (CABF baseline forbids them in
+      --  TLS certs); the semantic-compare path treats them as
+      --  non-matching since this routine only inspects the first ATV.
       procedure Next_ATV
-        (DER     : in     Byte_Seq;
-         P       : in out N32;
-         E       : in     N32;
-         OID_S   :    out N32;
-         OID_L   :    out N32;
-         Val_Tag :    out Byte;
-         Val_S   :    out N32;
-         Val_L   :    out N32;
-         Set_End :    out N32;
-         OK      :    out Boolean)
+        (DER          : in     Byte_Seq;
+         P            : in out N32;
+         E            : in     N32;
+         OID_S        :    out N32;
+         OID_L        :    out N32;
+         Val_Tag      :    out Byte;
+         Val_S        :    out N32;
+         Val_L        :    out N32;
+         Set_End      :    out N32;
+         Multi_Valued :    out Boolean;
+         OK           :    out Boolean)
       with Pre => DER'First = 0 and DER'Last < N32'Last
                   and E <= DER'Last + 1
       is
          Set_Len, Seq_Len, OL, VL : N32;
          Loc_OK : Boolean := True;
+         End_Of_First_ATV : N32;
       begin
          OID_S := 0; OID_L := 0;
          Val_Tag := 0; Val_S := 0; Val_L := 0;
-         Set_End := P; OK := False;
+         Set_End := P; Multi_Valued := False; OK := False;
          if P >= E or P > DER'Last then return; end if;
          --  SET { SEQUENCE { OID, value } }
          if DER (P) /= TAG_SET then return; end if;
@@ -848,6 +854,7 @@ is
          Parse_Length (DER, P, Seq_Len, Loc_OK);
          if not Loc_OK or else Seq_Len = 0 then return; end if;
          if not Can_Read (DER, P, Seq_Len) then return; end if;
+         End_Of_First_ATV := P + Seq_Len;
          --  OID
          if P > DER'Last or else DER (P) /= TAG_OID then return; end if;
          P := P + 1;
@@ -867,6 +874,9 @@ is
          if not Loc_OK then return; end if;
          Val_S := P;
          Val_L := VL;
+         --  Multi-valued check: bytes remain in the SET past the first
+         --  ATV's SEQUENCE? If so, more ATVs are present.
+         Multi_Valued := End_Of_First_ATV < Set_End;
          --  Advance P to end of SET (skip entire RDN)
          P := Set_End;
          OK := True;
@@ -933,6 +943,7 @@ is
          VS1, VS2       : N32;
          VL1, VL2       : N32;
          SE1, SE2       : N32;
+         MV1, MV2       : Boolean;
          OK1, OK2       : Boolean;
          Fuel           : N32 := CI_Len + IS_Len;
       begin
@@ -947,14 +958,23 @@ is
             begin
                pragma Warnings (Off, """SE1"" is set by ""Next_ATV"" but not used");
                Next_ATV (Cert_DER, P1, E1,
-                         OID_S1, OID_L1, VT1, VS1, VL1, SE1, OK1);
+                         OID_S1, OID_L1, VT1, VS1, VL1, SE1, MV1, OK1);
                pragma Warnings (On, """SE1"" is set by ""Next_ATV"" but not used");
                pragma Warnings (Off, """SE2"" is set by ""Next_ATV"" but not used");
                Next_ATV (Issuer_DER, P2, E2,
-                         OID_S2, OID_L2, VT2, VS2, VL2, SE2, OK2);
+                         OID_S2, OID_L2, VT2, VS2, VL2, SE2, MV2, OK2);
                pragma Warnings (On, """SE2"" is set by ""Next_ATV"" but not used");
 
                if not OK1 or not OK2 then
+                  return False;
+               end if;
+
+               --  Multi-valued RDN: only the first ATV is exposed by
+               --  Next_ATV; comparing here would silently ignore the
+               --  remaining ATVs (name-confusion primitive). Reject
+               --  semantic-compare on multi-valued; the byte-exact
+               --  fast-path above already covered the only safe case.
+               if MV1 or MV2 then
                   return False;
                end if;
 
