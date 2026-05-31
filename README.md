@@ -1,11 +1,13 @@
 # SPARKx509
 
-This is a prototype for performing X509 certificate parsing using SPARK/Ada.
+This is a SPARK/Ada library for parsing X.509 certificates and supporting
+certificate validation in SPARKTLS.
 
 ## Disclaimer
 
-This project is in its VERY early stages and is not suitable for any
-kind of production use. It may be useful for research purposes or inspiration.
+This project is under active development and should be treated as alpha-quality
+software until the surrounding SPARKTLS stack reaches its verification and
+release goals.
 
 ## Description
 
@@ -13,7 +15,23 @@ SPARKx509 utilizes a recursive descent parser to parse X509 certificates. It
 is designed to fail very early if the certificate is not well-formed, and in
 so doing prevent a variety of attacks that can be performed on certificate
 parsing libraries. It is also designed to be easy to understand and verify
-using formal methods.
+using formal methods. It is 100% SPARK "silver" verified, with proven
+absence of runtime errors (AoRTE).
+
+## Validation Testing
+
+The comprehensive certificate validation tests live in the sibling SPARKTLS
+repository, because they exercise full path validation, hostname policy,
+trust-store handling, and WebPKI/RFC 5280 behavior beyond the scope of this
+parser crate alone.
+
+SPARKTLS currently passes 9,729 of 9,751 generated/runnable x509-limbo test
+cases, or 99.77%, with zero runtime errors in the test harness run. Counted
+against the full limbo corpus before local skips, this is 9,729 of 9,774 cases,
+or 99.54%.
+
+Several remaining discrepancies are deliberate policy-scope differences, such
+as CABF issuer requirements that are not enforced by a consumer path validator.
 
 ## Dependencies
 
@@ -28,9 +46,12 @@ To build the x509 library, run the following command:
 alr build
 ```
 
-To build the tests, run the following commands:
+The active X.509 validation tests are run from the SPARKTLS repository:
 
 ```shell
-cd tests/
-./build_tests.sh
+cd ../sparktls
+tests/x509/run.sh
 ```
+
+The SPARKTLS test harness downloads and generates the x509-limbo vectors on
+first run.

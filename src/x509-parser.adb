@@ -281,7 +281,10 @@ is
 
          --  RFC 5280 §4.1.2.2: Serial must be positive (high bit clear)
          --  and must not be all zeros.
-         if Len > 0 and then Can_Read (DER, Serial_Start, Len) then
+         if Len > 0
+            and then Can_Read (DER, Serial_Start, Len)
+            and then Len - 1 <= DER'Last - Serial_Start
+         then
             --  RFC 5280 §4.1.2.2: serial must be at most 20 octets
             if Len > 20 then
                C.Bad_Serial := True;
@@ -295,7 +298,7 @@ is
                All_Zero : Boolean := True;
             begin
                for I in N32 range 0 .. Len - 1 loop
-                  pragma Loop_Invariant (Serial_Start + I <= DER'Last);
+                  pragma Loop_Invariant (I <= Len - 1);
                   if DER (Serial_Start + I) /= 0 then
                      All_Zero := False;
                   end if;
@@ -616,8 +619,8 @@ is
                      Parse_Length (DER, Pos, Exp_Len, Valid);
                      if Valid and then Exp_Len > 0
                         and then Can_Read (DER, Pos, Exp_Len)
+                        and then Exp_Len - 1 <= DER'Last - Pos
                      then
-                        pragma Assert (Pos + Exp_Len - 1 <= DER'Last);
                         --  RFC 3279: exponent must be positive
                         if DER (Pos) >= 16#80# then
                            C.Bad_PubKey := True;
@@ -638,13 +641,14 @@ is
                            pragma Assert (Limit >= 1);
                            for I in N32 range 0 .. Limit - 1 loop
                               pragma Loop_Invariant
-                                (Pos + Exp_Len - 1 <= DER'Last
+                                (Exp_Len - 1 <= DER'Last - Pos
                                  and then I <= Limit - 1
                                  and then Limit <= Exp_Len);
                               pragma Assert (I < Exp_Len);
-                              pragma Assert (Pos + I <= Pos + Exp_Len - 1);
-                              C.PK_RSA_Exp := C.PK_RSA_Exp * 256 +
-                                              Unsigned_32 (DER (Pos + I));
+                              if I <= DER'Last - Pos then
+                                 C.PK_RSA_Exp := C.PK_RSA_Exp * 256 +
+                                                 Unsigned_32 (DER (Pos + I));
+                              end if;
                            end loop;
                         end;
                         pragma Warnings (Off, """Pos"" is set by ""Skip"" but not used");
@@ -866,6 +870,7 @@ is
                         C.Bad_SAN := True;
                      elsif Can_Read
                         (DER, P, GN_Len)
+                        and then GN_Len - 1 <= DER'Last - P
                      then
                         --  Leading dot is invalid
                         if DER (P) = 16#2E# then
@@ -876,7 +881,7 @@ is
                            0 .. GN_Len - 1
                         loop
                            pragma Loop_Invariant
-                             (P + J <= DER'Last);
+                             (J <= GN_Len - 1);
                            declare
                               Ch : constant Byte :=
                                 DER (P + J);
@@ -916,6 +921,7 @@ is
                      if GN_Len > 0
                         and then Can_Read
                            (DER, P, GN_Len)
+                        and then GN_Len - 1 <= DER'Last - P
                      then
                         declare
                            Has_At   : Boolean :=
@@ -927,8 +933,7 @@ is
                               0 .. GN_Len - 1
                            loop
                               pragma Loop_Invariant
-                                (P + J <=
-                                   DER'Last);
+                                (J <= GN_Len - 1);
                               if DER (P + J) =
                                  16#40#
                               then
@@ -969,18 +974,18 @@ is
                            Has_Scheme : Boolean :=
                              False;
                         begin
-                           if GN_Len >= 3
-                              and then P <= DER'Last
-                              and then DER'Last - P >= GN_Len - 1
+                        if GN_Len >= 3
+                           and then P <= DER'Last
+                           and then DER'Last - P >= GN_Len - 1
                            then
                               for J in N32 range
                                  0 .. GN_Len - 3
                               loop
                                  pragma
                                    Loop_Invariant
-                                     (P + J + 2
-                                        <= DER'Last);
-                                 if DER (P + J)
+                                     (J <= GN_Len - 3);
+                                 if J + 2 <= DER'Last - P
+                                    and then DER (P + J)
                                       = 16#3A#
                                     and then
                                     DER (P + J + 1)
@@ -1133,9 +1138,22 @@ is
                               C.Ext_Has_Path_Len := False;
                            else
                               for I in N32 range 0 .. PL_Len - 1 loop
-                                 PL_Val := PL_Val * 256
-                                   + Natural (DER (P + I));
-                                 exit when PL_Val > 1024;  -- saturate
+                                 pragma Loop_Invariant (PL_Val <= 1025);
+                                 pragma Loop_Invariant
+                                   (P + PL_Len - 1 <= DER'Last);
+                                 declare
+                                    B : constant Natural :=
+                                      Natural (DER (P + I));
+                                 begin
+                                    if PL_Val <= 3 then
+                                       PL_Val := PL_Val * 256 + B;
+                                    elsif PL_Val = 4 and then B = 0 then
+                                       PL_Val := 1024;
+                                    else
+                                       PL_Val := 1025;
+                                    end if;
+                                 end;
+                                 exit when PL_Val = 1025;  -- saturate
                               end loop;
                               if PL_Val <= 1024 then
                                  C.Ext_Has_Path_Len := True;
@@ -1646,6 +1664,9 @@ is
                              (DER,
                               Seen_OIDs (I).Start,
                               PO_Len)
+                           and then PO_Len - 1 <= DER'Last - PO_Start
+                           and then PO_Len - 1 <=
+                             DER'Last - Seen_OIDs (I).Start
                         then
                            declare
                               Match : Boolean :=
@@ -1654,14 +1675,7 @@ is
                               for J in N32 range
                                 0 .. PO_Len - 1
                               loop
-                                 pragma
-                                   Loop_Invariant
-                                     (PO_Start + J
-                                        <= DER'Last
-                                      and then
-                                      Seen_OIDs (I)
-                                        .Start + J
-                                        <= DER'Last);
+                                 pragma Loop_Invariant (J <= PO_Len - 1);
                                  if DER
                                    (PO_Start + J)
                                    /= DER
@@ -2094,15 +2108,15 @@ is
                   if Seen_Exts (J).Len = OID_Len
                      and then Can_Read (DER, Seen_Exts (J).Start,
                                         Seen_Exts (J).Len)
+                     and then OID_Len - 1 <= DER'Last - OID_Start
+                     and then OID_Len - 1 <=
+                       DER'Last - Seen_Exts (J).Start
                   then
                      declare
                         Match : Boolean := True;
                      begin
                         for K in N32 range 0 .. OID_Len - 1 loop
-                           pragma Loop_Invariant
-                             (OID_Start + OID_Len - 1 <= DER'Last);
-                           pragma Loop_Invariant
-                             (Seen_Exts (J).Start + OID_Len - 1 <= DER'Last);
+                           pragma Loop_Invariant (K <= OID_Len - 1);
                            if DER (OID_Start + K) /=
                               DER (Seen_Exts (J).Start + K)
                            then

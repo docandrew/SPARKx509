@@ -895,15 +895,14 @@ is
       if CI_Len = IS_Len and then CI_Len > 0
          and then Can_Read (Cert_DER, Cert_Issuer.First, CI_Len)
          and then Can_Read (Issuer_DER, Issuer_Subj.First, IS_Len)
+         and then CI_Len - 1 <= Cert_DER'Last - Cert_Issuer.First
+         and then IS_Len - 1 <= Issuer_DER'Last - Issuer_Subj.First
       then
          declare
             Exact : Boolean := True;
          begin
             for I in N32 range 0 .. CI_Len - 1 loop
-               pragma Loop_Invariant
-                 (Cert_Issuer.First + I <= Cert_DER'Last);
-               pragma Loop_Invariant
-                 (Issuer_Subj.First + I <= Issuer_DER'Last);
+               pragma Loop_Invariant (I <= CI_Len - 1);
                if Cert_DER (Cert_Issuer.First + I) /=
                   Issuer_DER (Issuer_Subj.First + I)
                then
@@ -995,11 +994,16 @@ is
             if OID_L1 > 0
                and then Can_Read (Cert_DER, OID_S1, OID_L1)
                and then Can_Read (Issuer_DER, OID_S2, OID_L2)
+               and then OID_L1 - 1 <= Cert_DER'Last - OID_S1
+               and then OID_L2 - 1 <= Issuer_DER'Last - OID_S2
             then
                for I in N32 range 0 .. OID_L1 - 1 loop
-                  pragma Loop_Invariant (OID_S1 + I <= Cert_DER'Last);
-                  pragma Loop_Invariant (OID_S2 + I <= Issuer_DER'Last);
-                  if Cert_DER (OID_S1 + I) /= Issuer_DER (OID_S2 + I) then
+                  pragma Loop_Invariant (I <= OID_L1 - 1);
+                  if I > Cert_DER'Last - OID_S1
+                     or else I > Issuer_DER'Last - OID_S2
+                  then
+                     return False;
+                  elsif Cert_DER (OID_S1 + I) /= Issuer_DER (OID_S2 + I) then
                      return False;
                   end if;
                end loop;
@@ -1101,18 +1105,43 @@ is
                         declare
                            Match : Boolean := True;
                         begin
-                           for I in N32 range 0 .. Base_Len - 1 loop
-                              pragma Loop_Invariant
-                                (Suffix_Start + I <= Issuer_DER'Last);
-                              pragma Loop_Invariant
-                                (Base_First + I <= Cert_DER'Last);
-                              if To_Lower (Issuer_DER (Suffix_Start + I)) /=
-                                 To_Lower (Cert_DER (Base_First + I))
-                              then
-                                 Match := False;
-                                 exit;
-                              end if;
-                           end loop;
+                           if Base_Len - 1 <= Issuer_DER'Last - Suffix_Start
+                              and then Base_Len - 1 <= Cert_DER'Last - Base_First
+                           then
+                              declare
+                                 Issuer_Pos : N32 := Suffix_Start;
+                                 Cert_Pos   : N32 := Base_First;
+                              begin
+                                 for I in N32 range 0 .. Base_Len - 1 loop
+                                    pragma Loop_Invariant (I <= Base_Len - 1);
+                                    pragma Loop_Invariant
+                                      (Issuer_Pos <= Issuer_DER'Last);
+                                    pragma Loop_Invariant
+                                      (Cert_Pos <= Cert_DER'Last);
+
+                                    if To_Lower (Issuer_DER (Issuer_Pos)) /=
+                                       To_Lower (Cert_DER (Cert_Pos))
+                                    then
+                                       Match := False;
+                                       exit;
+                                    end if;
+
+                                    if I < Base_Len - 1 then
+                                       if Issuer_Pos < Issuer_DER'Last
+                                          and then Cert_Pos < Cert_DER'Last
+                                       then
+                                          Issuer_Pos := Issuer_Pos + 1;
+                                          Cert_Pos := Cert_Pos + 1;
+                                       else
+                                          Match := False;
+                                          exit;
+                                       end if;
+                                    end if;
+                                 end loop;
+                              end;
+                           else
+                              Match := False;
+                           end if;
                            if Match then
                               return True;
                            end if;
@@ -1155,16 +1184,44 @@ is
             if Cert_DER (Dot_Pos) /= 16#2E# then  --  '.'
                return False;
             end if;
+            if Suffix_Start > Cert_DER'Last
+               or else Cons_First > Issuer_DER'Last
+            then
+               return False;
+            end if;
+            if Cons_Len - 1 > Cert_DER'Last - Suffix_Start
+               or else Cons_Len - 1 > Issuer_DER'Last - Cons_First
+            then
+               return False;
+            end if;
             --  Compare suffix
-            for I in N32 range 0 .. Cons_Len - 1 loop
-               pragma Loop_Invariant (Suffix_Start + I <= Cert_DER'Last);
-               pragma Loop_Invariant (Cons_First + I <= Issuer_DER'Last);
-               if To_Lower (Cert_DER (Suffix_Start + I)) /=
-                  To_Lower (Issuer_DER (Cons_First + I))
-               then
-                  return False;
-               end if;
-            end loop;
+            declare
+               Cert_Pos   : N32 := Suffix_Start;
+               Issuer_Pos : N32 := Cons_First;
+            begin
+               for I in N32 range 0 .. Cons_Len - 1 loop
+                  pragma Loop_Invariant (I <= Cons_Len - 1);
+                  pragma Loop_Invariant (Cert_Pos <= Cert_DER'Last);
+                  pragma Loop_Invariant (Issuer_Pos <= Issuer_DER'Last);
+
+                  if To_Lower (Cert_DER (Cert_Pos)) /=
+                     To_Lower (Issuer_DER (Issuer_Pos))
+                  then
+                     return False;
+                  end if;
+
+                  if I < Cons_Len - 1 then
+                     if Cert_Pos < Cert_DER'Last
+                        and then Issuer_Pos < Issuer_DER'Last
+                     then
+                        Cert_Pos := Cert_Pos + 1;
+                        Issuer_Pos := Issuer_Pos + 1;
+                     else
+                        return False;
+                     end if;
+                  end if;
+               end loop;
+            end;
             return True;
          end;
       end DNS_Matches_Constraint;
