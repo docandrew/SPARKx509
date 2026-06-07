@@ -381,19 +381,25 @@ is
             return;
          end if;
          --  Now: T_Start + T_Ln - 1 <= DER'Last
+         declare
+            Last_Pos : constant N32 := T_Start + T_Ln - 1;
+         begin
+         pragma Assert (Last_Pos <= DER'Last);
          --  Must end in 'Z' (0x5A)
-         if DER (T_Start + T_Ln - 1) /= 16#5A# then
+         if DER (Last_Pos) /= 16#5A# then
             C.Bad_Time_Format := True;
          end if;
          --  GeneralizedTime must NOT have fractional seconds ('.' = 0x2E)
          if Tag = TAG_GENTIME and then T_Ln > 14 then
-            for I in N32 range 14 .. T_Ln - 1 loop
-               pragma Loop_Invariant (T_Start + I <= DER'Last);
-               if DER (T_Start + I) = 16#2E# then
+            for P in N32 range T_Start + 14 .. Last_Pos loop
+               pragma Loop_Invariant (P <= Last_Pos);
+               pragma Loop_Invariant (Last_Pos <= DER'Last);
+               if DER (P) = 16#2E# then
                   C.Bad_Time_Format := True;
                end if;
             end loop;
          end if;
+         end;
          --  Dates with year >= 2050 must use GeneralizedTime
          if Tag = TAG_UTCTIME and then DT.Year >= 2050 then
             C.Bad_Time_Format := True;

@@ -4,6 +4,10 @@ alire/
 config/
 scratch/
 tests/tests
+tests/smoke/bin/
+tests/smoke/obj/
+tests/smoke/alire/
+tests/smoke/config/
 
 # Ignore generated .ads and .adb
 *b__*

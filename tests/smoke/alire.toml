@@ -1,0 +1,11 @@
+name = "sparkx509_smoke"
+version = "0.0.0"
+description = "Smoke tests for SPARKx509"
+project-files = ["smoke.gpr"]
+
+[[depends-on]]
+sparkx509 = "*"
+
+[[pins]]
+sparkx509 = { path = "../.." }
+

@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    env:
+      ALR_NON_INTERACTIVE: "1"
+      NO_COLOR: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: DeterminateSystems/nix-installer-action@v16
+
+      - uses: alire-project/setup-alire@v5
+        if: matrix.arch == 'aarch64'
+        with:
+          version: "2.1.0"
+          toolchain: "gnat_native gprbuild"
+
+      - name: Build and smoke test
+        run: nix develop --command bash ci/check.sh

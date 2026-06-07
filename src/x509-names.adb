@@ -158,23 +158,31 @@ is
       procedure Parse_IPv4
         (IP_Bytes : out Byte_Seq;
          OK       : out Boolean)
-      with Pre => IP_Bytes'First = 0 and IP_Bytes'Length = 4
+      with Pre => IP_Bytes'First = 0 and IP_Bytes'Last = 3
       is
          Octet : Natural := 0;
          B_Idx : N32 := 0;
+         Have_Digit : Boolean := False;
       begin
          IP_Bytes := (others => 0);
          OK := False;
+         pragma Assert (IP_Bytes'Last = 3);
          for I in Hostname'Range loop
             pragma Loop_Invariant (Octet <= 255);
             pragma Loop_Invariant (B_Idx <= 3);
+            pragma Loop_Invariant (IP_Bytes'First = 0);
+            pragma Loop_Invariant (IP_Bytes'Last = 3);
             if Hostname (I) = '.' then
+               if not Have_Digit then return; end if;
                if Octet > 255 then return; end if;
                if B_Idx > 2 then return; end if;
+               pragma Assert (B_Idx in IP_Bytes'Range);
                IP_Bytes (B_Idx) := Byte (Octet);
                B_Idx := B_Idx + 1;
                Octet := 0;
+               Have_Digit := False;
             elsif Hostname (I) in '0' .. '9' then
+               Have_Digit := True;
                Octet := Octet * 10 +
                   (Character'Pos (Hostname (I)) - Character'Pos ('0'));
                if Octet > 255 then return; end if;
@@ -182,8 +190,10 @@ is
                return;
             end if;
          end loop;
+         if not Have_Digit then return; end if;
          if Octet > 255 or B_Idx /= 3 then return; end if;
-         IP_Bytes (3) := Byte (Octet);
+         pragma Assert (IP_Bytes'Last = 3);
+         IP_Bytes (IP_Bytes'Last) := Byte (Octet);
          OK := True;
       end Parse_IPv4;
 
@@ -1040,10 +1050,11 @@ is
       --  DNS name (in Issuer_DER).  Per RFC 5280, "example.com" matches
       --  "example.com" exactly, and "foo.example.com" matches because
       --  it ends with ".example.com".
-      --  Also handles wildcard SANs: "*.example.com" matches constraint
-      --  "example.com" and any constraint that is a subdomain of
-      --  "example.com" (e.g. "bar.example.com"), because the wildcard
-      --  could expand to match such names.
+      --  Also handles wildcard SANs: "*.example.com" is constrained by
+      --  testing the base domain "example.com".  This is deliberately
+      --  conservative: a wildcard must not satisfy a narrower permitted
+      --  subtree such as "bar.example.com", because it could also match
+      --  names outside that subtree.
       function DNS_Matches_Constraint
         (DNS_Span   : Span;
          Cons_First : N32;
@@ -1064,13 +1075,9 @@ is
             return False;
          end if;
 
-         --  Handle wildcard SANs: "*.example.com"
-         --  The wildcard base domain is "example.com" (after "*.")
-         --  It matches:
-         --    - constraint "example.com" (exact base)
-         --    - constraint "foo.example.com" (subdomain of base)
-         --    - constraint "example.com" as a suffix (base is under
-         --      the constraint)
+         --  Handle wildcard SANs: "*.example.com".  The wildcard base
+         --  domain is "example.com" (after "*.").  It matches only when
+         --  that base itself is within the constraint.
          if DNS_Len >= 3
             and then Cert_DER (DNS_Span.First) = 16#2A#      --  '*'
             and then Cert_DER (DNS_Span.First + 1) = 16#2E#  --  '.'
@@ -1083,74 +1090,9 @@ is
                   (First => Base_First, Last => Base_First + Base_Len - 1,
                    Present => True);
             begin
-               --  Recursively check: does "example.com" match the constraint?
-               --  This handles both "example.com" == constraint and
-               --  "example.com" as subdomain of constraint.
-               if DNS_Matches_Constraint (Base_Span, Cons_First, Cons_Len) then
-                  return True;
-               end if;
-               --  Also check reverse: is the constraint a subdomain of the
-               --  base?  E.g. constraint "bar.example.com" ends with
-               --  ".example.com" — meaning the wildcard could expand to it.
-               if Cons_Len > Base_Len and then Base_Len > 0 then
-                  declare
-                     Suffix_Start : constant N32 :=
-                        Cons_First + Cons_Len - Base_Len;
-                     Dot_Pos      : constant N32 := Suffix_Start - 1;
-                  begin
-                     if Dot_Pos >= Issuer_DER'First
-                        and then Dot_Pos <= Issuer_DER'Last
-                        and then Issuer_DER (Dot_Pos) = 16#2E#
-                     then
-                        declare
-                           Match : Boolean := True;
-                        begin
-                           if Base_Len - 1 <= Issuer_DER'Last - Suffix_Start
-                              and then Base_Len - 1 <= Cert_DER'Last - Base_First
-                           then
-                              declare
-                                 Issuer_Pos : N32 := Suffix_Start;
-                                 Cert_Pos   : N32 := Base_First;
-                              begin
-                                 for I in N32 range 0 .. Base_Len - 1 loop
-                                    pragma Loop_Invariant (I <= Base_Len - 1);
-                                    pragma Loop_Invariant
-                                      (Issuer_Pos <= Issuer_DER'Last);
-                                    pragma Loop_Invariant
-                                      (Cert_Pos <= Cert_DER'Last);
-
-                                    if To_Lower (Issuer_DER (Issuer_Pos)) /=
-                                       To_Lower (Cert_DER (Cert_Pos))
-                                    then
-                                       Match := False;
-                                       exit;
-                                    end if;
-
-                                    if I < Base_Len - 1 then
-                                       if Issuer_Pos < Issuer_DER'Last
-                                          and then Cert_Pos < Cert_DER'Last
-                                       then
-                                          Issuer_Pos := Issuer_Pos + 1;
-                                          Cert_Pos := Cert_Pos + 1;
-                                       else
-                                          Match := False;
-                                          exit;
-                                       end if;
-                                    end if;
-                                 end loop;
-                              end;
-                           else
-                              Match := False;
-                           end if;
-                           if Match then
-                              return True;
-                           end if;
-                        end;
-                     end if;
-                  end;
-               end if;
+               return DNS_Matches_Constraint
+                 (Base_Span, Cons_First, Cons_Len);
             end;
-            return False;
          end if;
 
          --  Exact length match: compare directly
@@ -1619,6 +1561,30 @@ is
       --  Likewise for permitted subtrees with unsupported types
       if Issuer.S_Permitted_Subtrees.Present
          and then Has_Unsupported_Constraints (Issuer.S_Permitted_Subtrees)
+      then
+         return False;
+      end if;
+
+      --  DNS/IP name constraints must be evaluated against every name of the
+      --  constrained type.  The Certificate record stores only Max_SANs DNS
+      --  and IP SANs, so fail closed until this path walks overflow SANs
+      --  directly from SAN_Ext_Value as Matches_Hostname does.
+      if ((Issuer.S_Excluded_Subtrees.Present
+             and then Has_DNS_Constraints (Issuer.S_Excluded_Subtrees))
+          or else
+          (Issuer.S_Permitted_Subtrees.Present
+             and then Has_DNS_Constraints (Issuer.S_Permitted_Subtrees)))
+         and then Cert.SAN_Num > Max_SANs
+      then
+         return False;
+      end if;
+
+      if ((Issuer.S_Excluded_Subtrees.Present
+             and then Has_IP_Constraints (Issuer.S_Excluded_Subtrees))
+          or else
+          (Issuer.S_Permitted_Subtrees.Present
+             and then Has_IP_Constraints (Issuer.S_Permitted_Subtrees)))
+         and then Cert.IP_SAN_Num > Max_SANs
       then
          return False;
       end if;

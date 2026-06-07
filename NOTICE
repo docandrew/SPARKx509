@@ -1,0 +1,15 @@
+SPARKx509
+=========
+
+SPARKx509 is licensed under the BSD 3-Clause License. See LICENSE.
+
+Third-party material
+--------------------
+
+The library source is original project code. The smoke tests use OpenSSL as an
+external command-line tool to generate temporary test certificates, but OpenSSL
+source code is not incorporated into this repository.
+
+Broader X.509 validation coverage is exercised from the sibling SPARKTLS
+repository using the x509-limbo test corpus under that repository's test
+directory and its upstream license.
