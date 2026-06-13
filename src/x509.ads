@@ -586,6 +586,30 @@ private
 
    --  Private expression function completions (visible to child packages
    --  for proof purposes)
+   function Spans_Valid
+     (Cert     : Certificate;
+      DER_Last : N32) return Boolean is
+     (Span_In_Range (Cert.S_TBS, DER_Last)
+      and then Span_In_Range (Cert.S_Serial, DER_Last)
+      and then Span_In_Range (Cert.S_Issuer_CN, DER_Last)
+      and then Span_In_Range (Cert.S_Issuer_Org, DER_Last)
+      and then Span_In_Range (Cert.S_Issuer_Country, DER_Last)
+      and then Span_In_Range (Cert.S_Subject_CN, DER_Last)
+      and then Span_In_Range (Cert.S_Subject_Org, DER_Last)
+      and then Span_In_Range (Cert.S_Subject_Country, DER_Last)
+      and then Span_In_Range (Cert.S_Issuer_Raw, DER_Last)
+      and then Span_In_Range (Cert.S_Subject_Raw, DER_Last)
+      and then Span_In_Range (Cert.S_Auth_Key_ID, DER_Last)
+      and then Span_In_Range (Cert.S_AKID_Serial, DER_Last)
+      and then Span_In_Range (Cert.S_Subject_Key_ID, DER_Last)
+      and then Span_In_Range (Cert.SAN_Ext_Value, DER_Last)
+      and then Span_In_Range (Cert.S_Permitted_Subtrees, DER_Last)
+      and then Span_In_Range (Cert.S_Excluded_Subtrees, DER_Last)
+      and then (for all I in 1 .. Max_SANs =>
+                  Span_In_Range (Cert.SANs (I), DER_Last))
+      and then (for all I in 1 .. Max_SANs =>
+                  Span_In_Range (Cert.IP_SANs (I), DER_Last)));
+
    function Is_Valid (Cert : Certificate) return Boolean is (Cert.Valid_Flag);
 
 end X509;

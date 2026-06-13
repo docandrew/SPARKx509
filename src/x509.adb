@@ -6,35 +6,6 @@ package body X509 with
    SPARK_Mode => On
 is
 
-   function Spans_Valid
-     (Cert     : Certificate;
-      DER_Last : N32) return Boolean
-   is
-      function OK (S : Span) return Boolean is
-        (Span_In_Range (S, DER_Last));
-   begin
-      return OK (Cert.S_TBS)
-         and then OK (Cert.S_Serial)
-         and then OK (Cert.S_Issuer_CN)
-         and then OK (Cert.S_Issuer_Org)
-         and then OK (Cert.S_Issuer_Country)
-         and then OK (Cert.S_Subject_CN)
-         and then OK (Cert.S_Subject_Org)
-         and then OK (Cert.S_Subject_Country)
-         and then OK (Cert.S_Issuer_Raw)
-         and then OK (Cert.S_Subject_Raw)
-         and then OK (Cert.S_Auth_Key_ID)
-         and then OK (Cert.S_AKID_Serial)
-         and then OK (Cert.S_Subject_Key_ID)
-         and then OK (Cert.SAN_Ext_Value)
-         and then OK (Cert.S_Permitted_Subtrees)
-         and then OK (Cert.S_Excluded_Subtrees)
-         and then (for all I in 1 .. Max_SANs =>
-                     OK (Cert.SANs (I)))
-         and then (for all I in 1 .. Max_SANs =>
-                     OK (Cert.IP_SANs (I)));
-   end Spans_Valid;
-
    function Algorithms_Valid (Cert : Certificate) return Boolean is
      (Cert.Sig_Algo /= Algo_Unknown
       and then Cert.Sig_Algo_2 /= Algo_Unknown
