@@ -1058,7 +1058,8 @@ is
       function DNS_Matches_Constraint
         (DNS_Span   : Span;
          Cons_First : N32;
-         Cons_Len   : N32) return Boolean
+         Cons_Len   : N32;
+         Excluded   : Boolean) return Boolean
       with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
                   and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last,
            Subprogram_Variant => (Decreases => Span_Length (DNS_Span))
@@ -1090,8 +1091,64 @@ is
                   (First => Base_First, Last => Base_First + Base_Len - 1,
                    Present => True);
             begin
-               return DNS_Matches_Constraint
-                 (Base_Span, Cons_First, Cons_Len);
+               if DNS_Matches_Constraint
+                    (Base_Span, Cons_First, Cons_Len, Excluded)
+               then
+                  return True;
+               end if;
+
+               --  For excluded subtrees, also reject a wildcard SAN when
+               --  the excluded constraint is one concrete name that the
+               --  wildcard could match.  Example: "*.example.com" must be
+               --  rejected by an excluded "bar.example.com" constraint for
+               --  the peer name bar.example.com.
+               if Excluded and then Cons_Len > Base_Len then
+                  declare
+                     Suffix_Start : constant N32 :=
+                        Cons_First + Cons_Len - Base_Len;
+                     Dot_Pos      : constant N32 := Suffix_Start - 1;
+                  begin
+                     if Dot_Pos >= Issuer_DER'First
+                        and then Dot_Pos <= Issuer_DER'Last
+                        and then Issuer_DER (Dot_Pos) = 16#2E#
+                        and then Suffix_Start <= Issuer_DER'Last
+                        and then Base_First <= Cert_DER'Last
+                        and then Base_Len - 1 <= Issuer_DER'Last - Suffix_Start
+                        and then Base_Len - 1 <= Cert_DER'Last - Base_First
+                     then
+                        declare
+                           Issuer_Pos : N32 := Suffix_Start;
+                           Cert_Pos   : N32 := Base_First;
+                        begin
+                           for I in N32 range 0 .. Base_Len - 1 loop
+                              pragma Loop_Invariant (I <= Base_Len - 1);
+                              pragma Loop_Invariant (Issuer_Pos <= Issuer_DER'Last);
+                              pragma Loop_Invariant (Cert_Pos <= Cert_DER'Last);
+
+                              if To_Lower (Issuer_DER (Issuer_Pos)) /=
+                                 To_Lower (Cert_DER (Cert_Pos))
+                              then
+                                 return False;
+                              end if;
+
+                              if I < Base_Len - 1 then
+                                 if Issuer_Pos < Issuer_DER'Last
+                                    and then Cert_Pos < Cert_DER'Last
+                                 then
+                                    Issuer_Pos := Issuer_Pos + 1;
+                                    Cert_Pos := Cert_Pos + 1;
+                                 else
+                                    return False;
+                                 end if;
+                              end if;
+                           end loop;
+                        end;
+                        return True;
+                     end if;
+                  end;
+               end if;
+
+               return False;
             end;
          end if;
 
@@ -1174,7 +1231,8 @@ is
       --  matches the cert DNS name.
       function Any_DNS_Constraint_Matches
         (Subtrees : Span;
-         DNS_Span : Span) return Boolean
+         DNS_Span : Span;
+         Excluded : Boolean) return Boolean
       with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
                   and Cert_DER'First = 0 and Cert_DER'Last < N32'Last
       is
@@ -1229,7 +1287,7 @@ is
                            and then Can_Read (Issuer_DER, DN_P, DN_Len)
                         then
                            if DNS_Matches_Constraint
-                                (DNS_Span, DN_P, DN_Len)
+                                (DNS_Span, DN_P, DN_Len, Excluded)
                            then
                               return True;
                            end if;
@@ -1594,7 +1652,8 @@ is
          for I in 1 .. Cert.SAN_Num loop
             if I <= Max_SANs and then Cert.SANs (I).Present then
                if Any_DNS_Constraint_Matches
-                    (Issuer.S_Excluded_Subtrees, Cert.SANs (I))
+                    (Issuer.S_Excluded_Subtrees, Cert.SANs (I),
+                     Excluded => True)
                then
                   return False;
                end if;
@@ -1607,7 +1666,8 @@ is
             and then Cert.S_Subject_CN.Present
          then
             if Any_DNS_Constraint_Matches
-                 (Issuer.S_Excluded_Subtrees, Cert.S_Subject_CN)
+                 (Issuer.S_Excluded_Subtrees, Cert.S_Subject_CN,
+                  Excluded => True)
             then
                return False;
             end if;
@@ -1636,7 +1696,8 @@ is
          for I in 1 .. Cert.SAN_Num loop
             if I <= Max_SANs and then Cert.SANs (I).Present then
                if not Any_DNS_Constraint_Matches
-                    (Issuer.S_Permitted_Subtrees, Cert.SANs (I))
+                    (Issuer.S_Permitted_Subtrees, Cert.SANs (I),
+                     Excluded => False)
                then
                   return False;
                end if;

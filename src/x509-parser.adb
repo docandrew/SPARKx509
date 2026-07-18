@@ -1900,6 +1900,13 @@ is
                   then
                      C.EKU_Has_Server_Auth := True;
                   end if;
+                  --  Track id-kp-clientAuth
+                  if OID_Match
+                       (DER, EKU_Start, EKU_OLen,
+                        OID_KP_CLIENT_AUTH)
+                  then
+                     C.EKU_Has_Client_Auth := True;
+                  end if;
                   --  Track anyExtendedKeyUsage
                   if OID_Match
                        (DER, EKU_Start, EKU_OLen,
@@ -2605,6 +2612,7 @@ is
                          Ext_Has_EKU         => False,
                          EKU_Has_Any         => False,
                          EKU_Has_Server_Auth => False,
+                         EKU_Has_Client_Auth => False,
                          EKU_Is_Critical     => False,
                          Bad_CRL_DP          => False,
                          SAN_Critical_With_Subject => False,

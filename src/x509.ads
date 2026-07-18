@@ -316,6 +316,8 @@ is
 
    --  Check if the cert has EKU with id-kp-serverAuth (for TLS server validation).
    function Has_EKU_Server_Auth (Cert : Certificate) return Boolean;
+   --  Check if the cert has EKU with id-kp-clientAuth (for TLS client validation).
+   function Has_EKU_Client_Auth (Cert : Certificate) return Boolean;
    function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean;
    function Has_EKU (Cert : Certificate) return Boolean;
    function Is_EKU_Critical (Cert : Certificate) return Boolean;
@@ -578,6 +580,7 @@ private
       Ext_Has_EKU          : Boolean       := False;
       EKU_Has_Any          : Boolean       := False;
       EKU_Has_Server_Auth  : Boolean       := False;
+      EKU_Has_Client_Auth  : Boolean       := False;
       EKU_Is_Critical      : Boolean       := False;
       Bad_CRL_DP           : Boolean       := False;
       SAN_Critical_With_Subject : Boolean  := False;

@@ -449,7 +449,7 @@ is
       --  it constrains what the CA can sign. A CA with serverAuth
       --  or clientAuth EKU can sign TLS certs. Google, Let's Encrypt,
       --  and other major CAs commonly include these on intermediates.
-      if Issuer.EKU_Has_Server_Auth then
+      if Issuer.EKU_Has_Server_Auth or else Issuer.EKU_Has_Client_Auth then
          return True;
       end if;
       --  EKU present but no recognized signing-related purpose
@@ -458,6 +458,9 @@ is
 
    function Has_EKU_Server_Auth (Cert : Certificate) return Boolean is
      (Cert.EKU_Has_Server_Auth);
+
+   function Has_EKU_Client_Auth (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_Client_Auth);
 
    function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean is
      (Cert.EKU_Has_Any);
