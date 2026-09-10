@@ -578,6 +578,12 @@ is
          end;
       end if;
 
+      --  Record the BIT STRING content (RFC 6960 4.1.1 issuerKeyHash input)
+      if BStr_Len > 0 and then Can_Read (DER, Pos, BStr_Len) then
+         C.S_SPKI_Bits := (First => Pos, Last => Pos + BStr_Len - 1,
+                           Present => True);
+      end if;
+
       if PK_Algo_ID = Algo_RSA then
          --  RSA key: BIT STRING contains SEQUENCE { modulus INTEGER, exponent INTEGER }
          if Pos <= DER'Last and then DER (Pos) = TAG_SEQUENCE then
@@ -1907,6 +1913,13 @@ is
                   then
                      C.EKU_Has_Client_Auth := True;
                   end if;
+                  --  Track id-kp-OCSPSigning (RFC 6960 4.2.2.2)
+                  if OID_Match
+                       (DER, EKU_Start, EKU_OLen,
+                        OID_KP_OCSP_SIGNING)
+                  then
+                     C.EKU_Has_OCSP_Signing := True;
+                  end if;
                   --  Track anyExtendedKeyUsage
                   if OID_Match
                        (DER, EKU_Start, EKU_OLen,
@@ -1939,11 +1952,15 @@ is
       Inner_End : N32;
    begin
       if not Valid then return; end if;
-      pragma Unreferenced (Val_Len);
       --  RFC 5280 §4.2.1.13: CRL Distribution Points
       --  SHOULD be non-critical
       if Is_Critical then
          C.Bad_CRL_DP := True;
+      end if;
+      --  Keep the whole value for issuingDistributionPoint matching
+      --  (X509.DER_Ext.DP_Name_Matches).
+      if Val_Len > 0 and then Can_Read (DER, Pos, Val_Len) then
+         C.S_CRL_DP := (First => Pos, Last => Pos + Val_Len - 1, Present => True);
       end if;
       --  DistributionPoint MUST NOT consist of only
       --  the reasons field
@@ -2447,6 +2464,58 @@ is
                      C.Bad_Ext_Content := True;
                   end if;
 
+               elsif OID_Match
+                  (DER, OID_Start, OID_Len, OID_TLS_FEATURE)
+               then
+                  --  RFC 7633 3: SEQUENCE OF INTEGER (TLS ExtensionType
+                  --  values); status_request = 5 means must-staple.
+                  --  RFC 7633 4.1: MUST NOT be critical.
+                  if Is_Critical then
+                     C.Bad_Ext_Criticality := True;
+                  end if;
+                  if Pos <= DER'Last
+                     and then DER (Pos) = TAG_SEQUENCE
+                  then
+                     declare
+                        TF_P   : N32 := Pos;
+                        TF_Len : N32;
+                        TF_End : N32;
+                        TF_OK  : Boolean := True;
+                     begin
+                        Parse_Sequence (DER, TF_P, TF_Len, TF_OK);
+                        if TF_OK and then Can_Read (DER, TF_P, TF_Len) then
+                           TF_End := TF_P + TF_Len;
+                           while TF_OK and then TF_P < TF_End loop
+                              pragma Loop_Invariant (TF_P <= DER'Last);
+                              pragma Loop_Invariant (TF_End <= DER'Last + 1);
+                              pragma Loop_Variant (Increases => TF_P);
+                              if DER (TF_P) /= TAG_INTEGER then
+                                 C.Bad_Ext_Content := True;
+                                 exit;
+                              end if;
+                              declare
+                                 I_Len : N32;
+                              begin
+                                 TF_P := TF_P + 1;
+                                 if TF_P > DER'Last then
+                                    exit;
+                                 end if;
+                                 Parse_Length (DER, TF_P, I_Len, TF_OK);
+                                 if not TF_OK
+                                    or else not Can_Read (DER, TF_P, I_Len)
+                                 then
+                                    exit;
+                                 end if;
+                                 if I_Len = 1 and then DER (TF_P) = 5 then
+                                    C.Requires_Staple := True;
+                                 end if;
+                                 TF_P := TF_P + I_Len;
+                              end;
+                           end loop;
+                        end if;
+                     end;
+                  end if;
+
                else
                   --  Unknown extension
                   if Is_Critical then
@@ -2613,10 +2682,14 @@ is
                          EKU_Has_Any         => False,
                          EKU_Has_Server_Auth => False,
                          EKU_Has_Client_Auth => False,
+                         EKU_Has_OCSP_Signing => False,
                          EKU_Is_Critical     => False,
                          Bad_CRL_DP          => False,
                          SAN_Critical_With_Subject => False,
-                         V3_UniqueID_NoExts  => False);
+                         V3_UniqueID_NoExts  => False,
+                         Requires_Staple     => False,
+                         S_SPKI_Bits         => (0, 0, False),
+                         S_CRL_DP            => (0, 0, False));
 
       --  Outer SEQUENCE (Certificate)
       if Pos > DER'Last then Cert := C; OK := False; return; end if;

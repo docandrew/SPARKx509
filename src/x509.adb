@@ -461,6 +461,16 @@ is
 
    function Has_EKU_Client_Auth (Cert : Certificate) return Boolean is
      (Cert.EKU_Has_Client_Auth);
+   function Has_EKU_OCSP_Signing (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_OCSP_Signing);
+   function Must_Staple (Cert : Certificate) return Boolean is
+     (Cert.Requires_Staple);
+   function Subject_Public_Key_Bits (Cert : Certificate) return Span is
+     (Cert.S_SPKI_Bits);
+   function Issuer_Raw  (Cert : Certificate) return Span is (Cert.S_Issuer_Raw);
+   function CRL_Distribution_Points (Cert : Certificate) return Span is
+     (Cert.S_CRL_DP);
+   function Subject_Raw (Cert : Certificate) return Span is (Cert.S_Subject_Raw);
 
    function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean is
      (Cert.EKU_Has_Any);

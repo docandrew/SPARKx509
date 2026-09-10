@@ -210,6 +210,23 @@ is
 
    function TBS (Cert : Certificate) return Span;
 
+   --  subjectPublicKey BIT STRING content (after the unused-bits octet):
+   --  for RSA the DER RSAPublicKey SEQUENCE, for EC the point, for
+   --  Ed25519 the raw key. This is what RFC 6960 4.1.1 hashes for
+   --  CertID.issuerKeyHash and the byKey ResponderID.
+   function Subject_Public_Key_Bits (Cert : Certificate) return Span;
+
+   --  Content of the issuer / subject Name SEQUENCEs (byte-level views;
+   --  see Issuer_Matches for the RFC 5280 7.1 semantic comparison).
+   function Issuer_Raw  (Cert : Certificate) return Span;
+   function Subject_Raw (Cert : Certificate) return Span;
+
+   --  cRLDistributionPoints extension value (the SEQUENCE OF
+   --  DistributionPoint TLV, RFC 5280 4.2.1.13); not present when the
+   --  certificate has no such extension. Consumed by
+   --  X509.DER_Ext.DP_Name_Matches for issuingDistributionPoint scoping.
+   function CRL_Distribution_Points (Cert : Certificate) return Span;
+
    ----------------------------------------------------------------------------
    --  Validity dates
    ----------------------------------------------------------------------------
@@ -318,6 +335,9 @@ is
    function Has_EKU_Server_Auth (Cert : Certificate) return Boolean;
    --  Check if the cert has EKU with id-kp-clientAuth (for TLS client validation).
    function Has_EKU_Client_Auth (Cert : Certificate) return Boolean;
+   --  Check if the cert has EKU with id-kp-OCSPSigning (RFC 6960 4.2.2.2,
+   --  delegated OCSP responder).
+   function Has_EKU_OCSP_Signing (Cert : Certificate) return Boolean;
    function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean;
    function Has_EKU (Cert : Certificate) return Boolean;
    function Is_EKU_Critical (Cert : Certificate) return Boolean;
@@ -404,6 +424,11 @@ is
 
    --  RFC 5280 §4.2.1.9: pathLen present but cA is FALSE
    function Has_Path_Len_Without_CA (Cert : Certificate) return Boolean;
+
+   --  RFC 7633: TLS Feature extension lists status_request (5), so the
+   --  cert commits to OCSP stapling and a client MUST fail the handshake
+   --  when no stapled response arrives ("must-staple").
+   function Must_Staple (Cert : Certificate) return Boolean;
 
    --  Comprehensive structural validation (everything except signature).
    --  The postcondition formally encodes RFC 5280 requirements:
@@ -581,10 +606,17 @@ private
       EKU_Has_Any          : Boolean       := False;
       EKU_Has_Server_Auth  : Boolean       := False;
       EKU_Has_Client_Auth  : Boolean       := False;
+      EKU_Has_OCSP_Signing : Boolean       := False;
       EKU_Is_Critical      : Boolean       := False;
       Bad_CRL_DP           : Boolean       := False;
       SAN_Critical_With_Subject : Boolean  := False;
       V3_UniqueID_NoExts   : Boolean       := False;
+      Requires_Staple      : Boolean       := False;  --  RFC 7633
+
+      --  subjectPublicKey BIT STRING content span (see Subject_Public_Key_Bits)
+      S_SPKI_Bits          : Span;
+      --  cRLDistributionPoints extension value (see CRL_Distribution_Points)
+      S_CRL_DP             : Span;
    end record;
 
    --  Private expression function completions (visible to child packages
@@ -606,6 +638,8 @@ private
       and then Span_In_Range (Cert.S_AKID_Serial, DER_Last)
       and then Span_In_Range (Cert.S_Subject_Key_ID, DER_Last)
       and then Span_In_Range (Cert.SAN_Ext_Value, DER_Last)
+      and then Span_In_Range (Cert.S_SPKI_Bits, DER_Last)
+      and then Span_In_Range (Cert.S_CRL_DP, DER_Last)
       and then Span_In_Range (Cert.S_Permitted_Subtrees, DER_Last)
       and then Span_In_Range (Cert.S_Excluded_Subtrees, DER_Last)
       and then (for all I in 1 .. Max_SANs =>
