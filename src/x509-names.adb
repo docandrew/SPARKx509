@@ -633,6 +633,255 @@ is
       end;
    end CN_In_SAN;
 
+   --  RFC 5280 §7.1: Compare two string values with normalization.
+   --  - Case-insensitive for PrintableString (tag 0x13) and
+   --    UTF8String (tag 0x0C)
+   --  - Collapse internal whitespace runs to single space
+   --  - Strip leading and trailing whitespace
+   --  Returns True if values are equal after normalization.
+   function Normalized_String_Equal
+     (D1 : Byte_Seq; S1 : N32; L1 : N32;
+      D2 : Byte_Seq; S2 : N32; L2 : N32) return Boolean
+   with Pre => D1'First = 0 and D1'Last < N32'Last
+               and D2'First = 0 and D2'Last < N32'Last
+               and Can_Read (D1, S1, L1)
+               and Can_Read (D2, S2, L2)
+   is
+      P1 : N32 := S1;
+      P2 : N32 := S2;
+      E1 : constant N32 := S1 + L1;
+      E2 : constant N32 := S2 + L2;
+      C1, C2 : Byte;
+
+      --  Skip whitespace (0x20, 0x09)
+      procedure Skip_WS (D : Byte_Seq; P : in out N32; E : N32)
+      with Pre => D'First = 0 and D'Last < N32'Last
+                  and E <= D'Last + 1
+      is
+      begin
+         while P < E and then P <= D'Last
+               and then (D (P) = 16#20# or D (P) = 16#09#)
+         loop
+            pragma Loop_Invariant (P >= D'First and P < E);
+            pragma Loop_Variant (Decreases => E - P);
+            P := P + 1;
+         end loop;
+      end Skip_WS;
+
+      --  Advance past a whitespace run, consuming exactly one
+      --  logical space. Returns False if no WS to consume.
+      procedure Consume_WS
+        (D     : Byte_Seq;
+         P     : in out N32;
+         E     : N32;
+         Found : out Boolean)
+      with Pre => D'First = 0 and D'Last < N32'Last
+                  and E <= D'Last + 1
+      is
+      begin
+         Found := False;
+         if P < E and then P <= D'Last
+            and then (D (P) = 16#20# or D (P) = 16#09#)
+         then
+            Found := True;
+            while P < E and then P <= D'Last
+                  and then (D (P) = 16#20# or D (P) = 16#09#)
+            loop
+               pragma Loop_Invariant (P >= D'First and P < E);
+               pragma Loop_Variant (Decreases => E - P);
+               P := P + 1;
+            end loop;
+         end if;
+      end Consume_WS;
+
+      WS1, WS2 : Boolean;
+      Fuel : N32;
+   begin
+      --  Strip leading whitespace
+      Skip_WS (D1, P1, E1);
+      Skip_WS (D2, P2, E2);
+      Fuel := L1 + L2;
+
+      --  Compare character by character with normalization
+      while P1 < E1 and then P2 < E2 loop
+         pragma Loop_Variant (Decreases => Fuel);
+         pragma Loop_Invariant
+           (P1 >= D1'First and P2 >= D2'First);
+         --  Strip trailing whitespace (check if remaining is all WS)
+         declare
+            T1 : N32 := P1;
+            T2 : N32 := P2;
+         begin
+            Skip_WS (D1, T1, E1);
+            Skip_WS (D2, T2, E2);
+            --  Both at end after stripping trailing WS?
+            if T1 >= E1 and T2 >= E2 then
+               return True;
+            end if;
+            --  One at end but not the other?
+            if T1 >= E1 or T2 >= E2 then
+               return False;
+            end if;
+         end;
+
+         --  Both have non-WS content remaining
+         if P1 >= E1 or P2 >= E2
+            or P1 > D1'Last or P2 > D2'Last
+         then
+            return P1 >= E1 and P2 >= E2;
+         end if;
+
+         --  Check for whitespace runs — collapse to single match
+         Consume_WS (D1, P1, E1, WS1);
+         Consume_WS (D2, P2, E2, WS2);
+         if WS1 /= WS2 then
+            return False;
+         end if;
+         if WS1 then
+            --  Both consumed WS, continue to next non-WS char
+            null;
+         else
+            --  Compare next character (case-insensitive)
+            if P1 > D1'Last or P2 > D2'Last then
+               return False;
+            end if;
+            C1 := To_Lower (D1 (P1));
+            C2 := To_Lower (D2 (P2));
+            if C1 /= C2 then
+               return False;
+            end if;
+            P1 := P1 + 1;
+            P2 := P2 + 1;
+         end if;
+         if Fuel = 0 then
+            return False;
+         end if;
+         Fuel := Fuel - 1;
+      end loop;
+      --  If we get here, at least one pointer reached the end.
+      --  Check if both are at/past end (after trimming trailing WS).
+      declare
+         T1 : N32 := P1;
+         T2 : N32 := P2;
+      begin
+         Skip_WS (D1, T1, E1);
+         Skip_WS (D2, T2, E2);
+         return T1 >= E1 and T2 >= E2;
+      end;
+   end Normalized_String_Equal;
+
+   --  RFC 5280 7.1 attribute-value comparison and RDN walking. Package
+   --  level so Issuer_Matches and Satisfies_Name_Constraints share them.
+   --  Compare two attribute values.  For PrintableString (0x13) and
+   --  UTF8String (0x0C), use normalized comparison.  For everything
+   --  else, use byte-exact.
+   function Attr_Value_Equal
+     (D1 : Byte_Seq; Tag1 : Byte; S1 : N32; L1 : N32;
+      D2 : Byte_Seq; Tag2 : Byte; S2 : N32; L2 : N32) return Boolean
+   with Pre => D1'First = 0 and D1'Last < N32'Last
+               and D2'First = 0 and D2'Last < N32'Last
+               and (L1 = 0 or else Can_Read (D1, S1, L1))
+               and (L2 = 0 or else Can_Read (D2, S2, L2))
+   is
+   begin
+      --  Both must be string types for normalized comparison
+      if (Tag1 = 16#13# or Tag1 = 16#0C#)
+         and (Tag2 = 16#13# or Tag2 = 16#0C#)
+      then
+         if L1 = 0 and L2 = 0 then return True; end if;
+         if L1 = 0 or L2 = 0 then return False; end if;
+         return Normalized_String_Equal (D1, S1, L1, D2, S2, L2);
+      end if;
+
+      --  Non-string: byte-exact comparison
+      if L1 /= L2 then return False; end if;
+      if L1 = 0 then return True; end if;
+      if not Can_Read (D1, S1, L1) then return False; end if;
+      if not Can_Read (D2, S2, L2) then return False; end if;
+      for I in N32 range 0 .. L1 - 1 loop
+         pragma Loop_Invariant (S1 + I <= D1'Last);
+         pragma Loop_Invariant (S2 + I <= D2'Last);
+         if D1 (S1 + I) /= D2 (S2 + I) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Attr_Value_Equal;
+
+   --  Walk a Name SEQUENCE and extract the next RDN's first ATV.
+   --  P advances past the entire SET (RDN).
+   --  Set_End is set so the caller can advance past multi-valued RDNs.
+   --  Multi_Valued is True iff the SET contained more than one ATV.
+   --  Multi-valued RDNs are rare (CABF baseline forbids them in
+   --  TLS certs); the semantic-compare path treats them as
+   --  non-matching since this routine only inspects the first ATV.
+   procedure Next_ATV
+     (DER          : in     Byte_Seq;
+      P            : in out N32;
+      E            : in     N32;
+      OID_S        :    out N32;
+      OID_L        :    out N32;
+      Val_Tag      :    out Byte;
+      Val_S        :    out N32;
+      Val_L        :    out N32;
+      Set_End      :    out N32;
+      Multi_Valued :    out Boolean;
+      OK           :    out Boolean)
+   with Pre => DER'First = 0 and DER'Last < N32'Last
+               and E <= DER'Last + 1
+   is
+      Set_Len, Seq_Len, OL, VL : N32;
+      Loc_OK : Boolean := True;
+      End_Of_First_ATV : N32;
+   begin
+      OID_S := 0; OID_L := 0;
+      Val_Tag := 0; Val_S := 0; Val_L := 0;
+      Set_End := P; Multi_Valued := False; OK := False;
+      if P >= E or P > DER'Last then return; end if;
+      --  SET { SEQUENCE { OID, value } }
+      if DER (P) /= TAG_SET then return; end if;
+      P := P + 1;
+      if P > DER'Last then return; end if;
+      Parse_Length (DER, P, Set_Len, Loc_OK);
+      if not Loc_OK or else not Can_Read (DER, P, Set_Len) then
+         return;
+      end if;
+      Set_End := P + Set_Len;
+      --  SEQUENCE inside SET
+      if P > DER'Last or else DER (P) /= TAG_SEQUENCE then return; end if;
+      P := P + 1;
+      if P > DER'Last then return; end if;
+      Parse_Length (DER, P, Seq_Len, Loc_OK);
+      if not Loc_OK or else Seq_Len = 0 then return; end if;
+      if not Can_Read (DER, P, Seq_Len) then return; end if;
+      End_Of_First_ATV := P + Seq_Len;
+      --  OID
+      if P > DER'Last or else DER (P) /= TAG_OID then return; end if;
+      P := P + 1;
+      if P > DER'Last then return; end if;
+      Parse_Length (DER, P, OL, Loc_OK);
+      if not Loc_OK then return; end if;
+      OID_S := P;
+      OID_L := OL;
+      Skip (DER, P, OL, Loc_OK);
+      if not Loc_OK then return; end if;
+      --  Value (any tag)
+      if P > DER'Last then return; end if;
+      Val_Tag := DER (P);
+      P := P + 1;
+      if P > DER'Last then return; end if;
+      Parse_Length (DER, P, VL, Loc_OK);
+      if not Loc_OK then return; end if;
+      Val_S := P;
+      Val_L := VL;
+      --  Multi-valued check: bytes remain in the SET past the first
+      --  ATV's SEQUENCE? If so, more ATVs are present.
+      Multi_Valued := End_Of_First_ATV < Set_End;
+      --  Advance P to end of SET (skip entire RDN)
+      P := Set_End;
+      OK := True;
+   end Next_ATV;
+
    function Issuer_Matches
      (Cert       : Certificate;
       Cert_DER   : Byte_Seq;
@@ -645,252 +894,7 @@ is
       --  RFC 5280 §7.1: case fold a single byte (A-Z -> a-z)
 
 
-      --  RFC 5280 §7.1: Compare two string values with normalization.
-      --  - Case-insensitive for PrintableString (tag 0x13) and
-      --    UTF8String (tag 0x0C)
-      --  - Collapse internal whitespace runs to single space
-      --  - Strip leading and trailing whitespace
-      --  Returns True if values are equal after normalization.
-      function Normalized_String_Equal
-        (D1 : Byte_Seq; S1 : N32; L1 : N32;
-         D2 : Byte_Seq; S2 : N32; L2 : N32) return Boolean
-      with Pre => D1'First = 0 and D1'Last < N32'Last
-                  and D2'First = 0 and D2'Last < N32'Last
-                  and Can_Read (D1, S1, L1)
-                  and Can_Read (D2, S2, L2)
-      is
-         P1 : N32 := S1;
-         P2 : N32 := S2;
-         E1 : constant N32 := S1 + L1;
-         E2 : constant N32 := S2 + L2;
-         C1, C2 : Byte;
 
-         --  Skip whitespace (0x20, 0x09)
-         procedure Skip_WS (D : Byte_Seq; P : in out N32; E : N32)
-         with Pre => D'First = 0 and D'Last < N32'Last
-                     and E <= D'Last + 1
-         is
-         begin
-            while P < E and then P <= D'Last
-                  and then (D (P) = 16#20# or D (P) = 16#09#)
-            loop
-               pragma Loop_Invariant (P >= D'First and P < E);
-               pragma Loop_Variant (Decreases => E - P);
-               P := P + 1;
-            end loop;
-         end Skip_WS;
-
-         --  Advance past a whitespace run, consuming exactly one
-         --  logical space. Returns False if no WS to consume.
-         procedure Consume_WS
-           (D     : Byte_Seq;
-            P     : in out N32;
-            E     : N32;
-            Found : out Boolean)
-         with Pre => D'First = 0 and D'Last < N32'Last
-                     and E <= D'Last + 1
-         is
-         begin
-            Found := False;
-            if P < E and then P <= D'Last
-               and then (D (P) = 16#20# or D (P) = 16#09#)
-            then
-               Found := True;
-               while P < E and then P <= D'Last
-                     and then (D (P) = 16#20# or D (P) = 16#09#)
-               loop
-                  pragma Loop_Invariant (P >= D'First and P < E);
-                  pragma Loop_Variant (Decreases => E - P);
-                  P := P + 1;
-               end loop;
-            end if;
-         end Consume_WS;
-
-         WS1, WS2 : Boolean;
-         Fuel : N32;
-      begin
-         --  Strip leading whitespace
-         Skip_WS (D1, P1, E1);
-         Skip_WS (D2, P2, E2);
-         Fuel := L1 + L2;
-
-         --  Compare character by character with normalization
-         while P1 < E1 and then P2 < E2 loop
-            pragma Loop_Variant (Decreases => Fuel);
-            pragma Loop_Invariant
-              (P1 >= D1'First and P2 >= D2'First);
-            --  Strip trailing whitespace (check if remaining is all WS)
-            declare
-               T1 : N32 := P1;
-               T2 : N32 := P2;
-            begin
-               Skip_WS (D1, T1, E1);
-               Skip_WS (D2, T2, E2);
-               --  Both at end after stripping trailing WS?
-               if T1 >= E1 and T2 >= E2 then
-                  return True;
-               end if;
-               --  One at end but not the other?
-               if T1 >= E1 or T2 >= E2 then
-                  return False;
-               end if;
-            end;
-
-            --  Both have non-WS content remaining
-            if P1 >= E1 or P2 >= E2
-               or P1 > D1'Last or P2 > D2'Last
-            then
-               return P1 >= E1 and P2 >= E2;
-            end if;
-
-            --  Check for whitespace runs — collapse to single match
-            Consume_WS (D1, P1, E1, WS1);
-            Consume_WS (D2, P2, E2, WS2);
-            if WS1 /= WS2 then
-               return False;
-            end if;
-            if WS1 then
-               --  Both consumed WS, continue to next non-WS char
-               null;
-            else
-               --  Compare next character (case-insensitive)
-               if P1 > D1'Last or P2 > D2'Last then
-                  return False;
-               end if;
-               C1 := To_Lower (D1 (P1));
-               C2 := To_Lower (D2 (P2));
-               if C1 /= C2 then
-                  return False;
-               end if;
-               P1 := P1 + 1;
-               P2 := P2 + 1;
-            end if;
-            if Fuel = 0 then
-               return False;
-            end if;
-            Fuel := Fuel - 1;
-         end loop;
-         --  If we get here, at least one pointer reached the end.
-         --  Check if both are at/past end (after trimming trailing WS).
-         declare
-            T1 : N32 := P1;
-            T2 : N32 := P2;
-         begin
-            Skip_WS (D1, T1, E1);
-            Skip_WS (D2, T2, E2);
-            return T1 >= E1 and T2 >= E2;
-         end;
-      end Normalized_String_Equal;
-
-      --  Compare two attribute values.  For PrintableString (0x13) and
-      --  UTF8String (0x0C), use normalized comparison.  For everything
-      --  else, use byte-exact.
-      function Attr_Value_Equal
-        (D1 : Byte_Seq; Tag1 : Byte; S1 : N32; L1 : N32;
-         D2 : Byte_Seq; Tag2 : Byte; S2 : N32; L2 : N32) return Boolean
-      with Pre => D1'First = 0 and D1'Last < N32'Last
-                  and D2'First = 0 and D2'Last < N32'Last
-                  and (L1 = 0 or else Can_Read (D1, S1, L1))
-                  and (L2 = 0 or else Can_Read (D2, S2, L2))
-      is
-      begin
-         --  Both must be string types for normalized comparison
-         if (Tag1 = 16#13# or Tag1 = 16#0C#)
-            and (Tag2 = 16#13# or Tag2 = 16#0C#)
-         then
-            if L1 = 0 and L2 = 0 then return True; end if;
-            if L1 = 0 or L2 = 0 then return False; end if;
-            return Normalized_String_Equal (D1, S1, L1, D2, S2, L2);
-         end if;
-
-         --  Non-string: byte-exact comparison
-         if L1 /= L2 then return False; end if;
-         if L1 = 0 then return True; end if;
-         if not Can_Read (D1, S1, L1) then return False; end if;
-         if not Can_Read (D2, S2, L2) then return False; end if;
-         for I in N32 range 0 .. L1 - 1 loop
-            pragma Loop_Invariant (S1 + I <= D1'Last);
-            pragma Loop_Invariant (S2 + I <= D2'Last);
-            if D1 (S1 + I) /= D2 (S2 + I) then
-               return False;
-            end if;
-         end loop;
-         return True;
-      end Attr_Value_Equal;
-
-      --  Walk a Name SEQUENCE and extract the next RDN's first ATV.
-      --  P advances past the entire SET (RDN).
-      --  Set_End is set so the caller can advance past multi-valued RDNs.
-      --  Multi_Valued is True iff the SET contained more than one ATV.
-      --  Multi-valued RDNs are rare (CABF baseline forbids them in
-      --  TLS certs); the semantic-compare path treats them as
-      --  non-matching since this routine only inspects the first ATV.
-      procedure Next_ATV
-        (DER          : in     Byte_Seq;
-         P            : in out N32;
-         E            : in     N32;
-         OID_S        :    out N32;
-         OID_L        :    out N32;
-         Val_Tag      :    out Byte;
-         Val_S        :    out N32;
-         Val_L        :    out N32;
-         Set_End      :    out N32;
-         Multi_Valued :    out Boolean;
-         OK           :    out Boolean)
-      with Pre => DER'First = 0 and DER'Last < N32'Last
-                  and E <= DER'Last + 1
-      is
-         Set_Len, Seq_Len, OL, VL : N32;
-         Loc_OK : Boolean := True;
-         End_Of_First_ATV : N32;
-      begin
-         OID_S := 0; OID_L := 0;
-         Val_Tag := 0; Val_S := 0; Val_L := 0;
-         Set_End := P; Multi_Valued := False; OK := False;
-         if P >= E or P > DER'Last then return; end if;
-         --  SET { SEQUENCE { OID, value } }
-         if DER (P) /= TAG_SET then return; end if;
-         P := P + 1;
-         if P > DER'Last then return; end if;
-         Parse_Length (DER, P, Set_Len, Loc_OK);
-         if not Loc_OK or else not Can_Read (DER, P, Set_Len) then
-            return;
-         end if;
-         Set_End := P + Set_Len;
-         --  SEQUENCE inside SET
-         if P > DER'Last or else DER (P) /= TAG_SEQUENCE then return; end if;
-         P := P + 1;
-         if P > DER'Last then return; end if;
-         Parse_Length (DER, P, Seq_Len, Loc_OK);
-         if not Loc_OK or else Seq_Len = 0 then return; end if;
-         if not Can_Read (DER, P, Seq_Len) then return; end if;
-         End_Of_First_ATV := P + Seq_Len;
-         --  OID
-         if P > DER'Last or else DER (P) /= TAG_OID then return; end if;
-         P := P + 1;
-         if P > DER'Last then return; end if;
-         Parse_Length (DER, P, OL, Loc_OK);
-         if not Loc_OK then return; end if;
-         OID_S := P;
-         OID_L := OL;
-         Skip (DER, P, OL, Loc_OK);
-         if not Loc_OK then return; end if;
-         --  Value (any tag)
-         if P > DER'Last then return; end if;
-         Val_Tag := DER (P);
-         P := P + 1;
-         if P > DER'Last then return; end if;
-         Parse_Length (DER, P, VL, Loc_OK);
-         if not Loc_OK then return; end if;
-         Val_S := P;
-         Val_L := VL;
-         --  Multi-valued check: bytes remain in the SET past the first
-         --  ATV's SEQUENCE? If so, more ATVs are present.
-         Multi_Valued := End_Of_First_ATV < Set_End;
-         --  Advance P to end of SET (skip entire RDN)
-         P := Set_End;
-         OK := True;
-      end Next_ATV;
 
       CI_Len : N32;
       IS_Len : N32;
@@ -1436,39 +1440,164 @@ is
       --  directoryName constraint in the NC subtrees (Issuer_DER).
       --  Matching: the constraint DN content must byte-equal the
       --  SAN DN content (or be a prefix for subtree matching).
-      function DirName_Matches_Constraint
-        (DN_First  : N32;   --  SAN dirName content start in Cert_DER
-         DN_Len    : N32;   --  SAN dirName content length
-         Cons_First : N32;  --  constraint dirName content start in Issuer_DER
-         Cons_Len   : N32)  --  constraint dirName content length
-        return Boolean
+      --  RFC 5280 4.2.1.10: a directoryName is within a subtree when the
+      --  constraint's RDN sequence is a prefix of the name's RDN sequence,
+      --  RDN by RDN under the 7.1 rules (same attribute type; string
+      --  values compared through Attr_Value_Equal, as Issuer_Matches does).
+      --  Operands are Name SEQUENCE contents (RDN sequences without the
+      --  outer header). An empty constraint matches every name.
+      function DN_In_Subtree
+        (Name_First : N32;   --  name content start in Cert_DER
+         Name_Len   : N32;
+         Cons_First : N32;   --  constraint content start in Issuer_DER
+         Cons_Len   : N32) return Boolean
       with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
                   and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
       is
       begin
-         --  RFC 5280: constraint DN must be equal to or a prefix of SAN DN.
-         --  For now: byte-equal comparison (covers most real-world cases).
-         if DN_Len /= Cons_Len or DN_Len = 0 then
+         if Cons_Len = 0 then
+            return True;
+         end if;
+         if Name_Len = 0 then
             return False;
          end if;
-         if not Can_Read (Cert_DER, DN_First, DN_Len) then
+         if not Can_Read (Cert_DER, Name_First, Name_Len)
+           or else not Can_Read (Issuer_DER, Cons_First, Cons_Len)
+         then
             return False;
          end if;
-         if not Can_Read (Issuer_DER, Cons_First, Cons_Len) then
+         declare
+            P1 : N32 := Name_First;
+            P2 : N32 := Cons_First;
+            E1 : constant N32 := Name_First + Name_Len;
+            E2 : constant N32 := Cons_First + Cons_Len;
+            OID_S1, OID_S2 : N32;
+            OID_L1, OID_L2 : N32;
+            VT1, VT2       : Byte;
+            VS1, VS2       : N32;
+            VL1, VL2       : N32;
+            SE1, SE2       : N32;
+            MV1, MV2       : Boolean;
+            OK1, OK2       : Boolean;
+            Fuel           : N32 := Cons_Len;
+         begin
+            --  The constraint drives: every one of its RDNs must be
+            --  matched by the corresponding RDN of the name.
+            while P2 < E2 loop
+               pragma Loop_Variant (Decreases => Fuel);
+               pragma Loop_Invariant
+                 (P1 >= Cert_DER'First and P2 >= Issuer_DER'First);
+               if P1 >= E1 then
+                  return False;   --  name is shorter than the constraint
+               end if;
+               declare
+                  Old_P1 : constant N32 := P1;
+                  Old_P2 : constant N32 := P2;
+               begin
+                  pragma Warnings (Off, """SE1"" is set by ""Next_ATV"" but not used");
+                  Next_ATV (Cert_DER, P1, E1,
+                            OID_S1, OID_L1, VT1, VS1, VL1, SE1, MV1, OK1);
+                  pragma Warnings (On, """SE1"" is set by ""Next_ATV"" but not used");
+                  pragma Warnings (Off, """SE2"" is set by ""Next_ATV"" but not used");
+                  Next_ATV (Issuer_DER, P2, E2,
+                            OID_S2, OID_L2, VT2, VS2, VL2, SE2, MV2, OK2);
+                  pragma Warnings (On, """SE2"" is set by ""Next_ATV"" but not used");
+                  if not OK1 or not OK2 or MV1 or MV2 then
+                     return False;
+                  end if;
+                  if P1 <= Old_P1 or P2 <= Old_P2 then
+                     return False;
+                  end if;
+               end;
+               if Fuel = 0 then
+                  return False;
+               end if;
+               Fuel := Fuel - 1;
+               if OID_L1 /= OID_L2 then
+                  return False;
+               end if;
+               if OID_L1 > 0
+                  and then Can_Read (Cert_DER, OID_S1, OID_L1)
+                  and then Can_Read (Issuer_DER, OID_S2, OID_L2)
+                  and then OID_L1 - 1 <= Cert_DER'Last - OID_S1
+                  and then OID_L2 - 1 <= Issuer_DER'Last - OID_S2
+               then
+                  for I in N32 range 0 .. OID_L1 - 1 loop
+                     pragma Loop_Invariant (I <= OID_L1 - 1);
+                     if I > Cert_DER'Last - OID_S1
+                        or else I > Issuer_DER'Last - OID_S2
+                     then
+                        return False;
+                     elsif Cert_DER (OID_S1 + I) /= Issuer_DER (OID_S2 + I) then
+                        return False;
+                     end if;
+                  end loop;
+               end if;
+               if (VL1 > 0 and then not Can_Read (Cert_DER, VS1, VL1))
+                  or (VL2 > 0 and then not Can_Read (Issuer_DER, VS2, VL2))
+               then
+                  return False;
+               end if;
+               if not Attr_Value_Equal
+                 (Cert_DER, VT1, VS1, VL1,
+                  Issuer_DER, VT2, VS2, VL2)
+               then
+                  return False;
+               end if;
+            end loop;
+            return True;
+         end;
+      end DN_In_Subtree;
+
+      --  A GeneralName dirName [4] carries the full Name SEQUENCE TLV;
+      --  step over its header to the RDN-sequence content.
+      procedure Name_Content
+        (DER   : in     Byte_Seq;
+         First : in     N32;
+         Len   : in     N32;
+         C_First : out  N32;
+         C_Len   : out  N32;
+         OK      : out  Boolean)
+      with Pre => DER'First = 0 and DER'Last < N32'Last
+      is
+         P    : N32 := First + 1;
+         L    : N32;
+         L_OK : Boolean := True;
+      begin
+         C_First := 0; C_Len := 0; OK := False;
+         if Len < 2 or else not Can_Read (DER, First, Len)
+           or else DER (First) /= TAG_SEQUENCE or else P > DER'Last
+         then
+            return;
+         end if;
+         Parse_Length (DER, P, L, L_OK);
+         if not L_OK or else not Can_Read (DER, P, L) or else P + L /= First + Len then
+            return;
+         end if;
+         C_First := P; C_Len := L; OK := True;
+      end Name_Content;
+
+      --  dirName match: constraint [4] content (a Name TLV) against a
+      --  name given as RDN-sequence content.
+      function DirName_Matches_Constraint
+        (DN_First   : N32;   --  name content start in Cert_DER
+         DN_Len     : N32;   --  name content length
+         Cons_First : N32;   --  constraint [4] content start in Issuer_DER
+         Cons_Len   : N32)   --  constraint [4] content length
+        return Boolean
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+                  and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         CF, CL : N32;
+         C_OK   : Boolean;
+      begin
+         Name_Content (Issuer_DER, Cons_First, Cons_Len, CF, CL, C_OK);
+         if not C_OK then
             return False;
          end if;
-         for I in N32 range 0 .. DN_Len - 1 loop
-            pragma Loop_Invariant (DN_First + I <= Cert_DER'Last);
-            pragma Loop_Invariant (Cons_First + I <= Issuer_DER'Last);
-            if Cert_DER (DN_First + I) /= Issuer_DER (Cons_First + I) then
-               return False;
-            end if;
-         end loop;
-         return True;
+         return DN_In_Subtree (DN_First, DN_Len, CF, CL);
       end DirName_Matches_Constraint;
 
-      --  Walk NC subtrees for GN_DIR_NAME entries and check if any
-      --  matches the given cert SAN directoryName.
       function Any_DirName_Constraint_Matches
         (Subtrees : Span;
          DN_First : N32;
@@ -1545,17 +1674,352 @@ is
 
       --  Check if subtrees contain unsupported constraint types
       --  (email, URI — we now handle dirName separately)
-      function Has_Unsupported_Constraints (Subtrees : Span) return Boolean
-      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      --  Host-part rule shared by rfc822Name and URI constraints
+      --  (RFC 5280 4.2.1.10): a constraint with a leading '.' names a
+      --  domain and matches any host strictly below it; otherwise it
+      --  names one host exactly. Case-insensitive (IA5String).
+      function Host_In_Constraint
+        (H_First : N32; H_Len : N32;      --  host in Cert_DER
+         C_First : N32; C_Len : N32)      --  constraint in Issuer_DER
+        return Boolean
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+                  and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
       is
       begin
-         return Walk_Subtrees_Has_Tag (Issuer_DER, Subtrees, GN_RFC822_NAME)
-           or else Walk_Subtrees_Has_Tag (Issuer_DER, Subtrees, GN_URI);
-      end Has_Unsupported_Constraints;
+         if H_Len = 0 or else C_Len = 0
+           or else not Can_Read (Cert_DER, H_First, H_Len)
+           or else not Can_Read (Issuer_DER, C_First, C_Len)
+         then
+            return False;
+         end if;
+         if Issuer_DER (C_First) = 16#2E# then          --  ".domain"
+            if H_Len <= C_Len then
+               return False;
+            end if;
+            declare
+               Off : constant N32 := H_Len - C_Len;   --  host suffix start
+            begin
+               for I in N32 range 0 .. C_Len - 1 loop
+                  pragma Loop_Invariant (I <= C_Len - 1);
+                  if To_Lower (Cert_DER (H_First + Off + I))
+                     /= To_Lower (Issuer_DER (C_First + I))
+                  then
+                     return False;
+                  end if;
+               end loop;
+            end;
+            return True;
+         end if;
+         if H_Len /= C_Len then
+            return False;
+         end if;
+         for I in N32 range 0 .. C_Len - 1 loop
+            pragma Loop_Invariant (I <= C_Len - 1);
+            if To_Lower (Cert_DER (H_First + I)) /= To_Lower (Issuer_DER (C_First + I)) then
+               return False;
+            end if;
+         end loop;
+         return True;
+      end Host_In_Constraint;
 
-      --  DoS budget: reject if NC × names exceeds this threshold.
-      --  2048 constraints × 2048 SANs = 4M iterations — far too many.
-      --  A reasonable real-world chain has < 100 of each.
+      --  rfc822Name: "local@host" against a constraint that is either a
+      --  complete mailbox (contains '@', compared whole) or a host /
+      --  domain applied to the mailbox's host part.
+      function Email_In_Constraint
+        (M_First : N32; M_Len : N32;
+         C_First : N32; C_Len : N32) return Boolean
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+                  and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         At_Pos : N32 := 0;
+         Has_At : Boolean := False;
+         C_Has_At : Boolean := False;
+      begin
+         if M_Len = 0 or else C_Len = 0
+           or else not Can_Read (Cert_DER, M_First, M_Len)
+           or else not Can_Read (Issuer_DER, C_First, C_Len)
+         then
+            return False;
+         end if;
+         for I in N32 range 0 .. C_Len - 1 loop
+            pragma Loop_Invariant (I <= C_Len - 1);
+            if Issuer_DER (C_First + I) = 16#40# then
+               C_Has_At := True;
+            end if;
+         end loop;
+         if C_Has_At then
+            --  whole-mailbox constraint
+            if M_Len /= C_Len then
+               return False;
+            end if;
+            for I in N32 range 0 .. C_Len - 1 loop
+               pragma Loop_Invariant (I <= C_Len - 1);
+               if To_Lower (Cert_DER (M_First + I)) /= To_Lower (Issuer_DER (C_First + I)) then
+                  return False;
+               end if;
+            end loop;
+            return True;
+         end if;
+         for I in N32 range 0 .. M_Len - 1 loop
+            pragma Loop_Invariant (I <= M_Len - 1);
+            if Cert_DER (M_First + I) = 16#40# then
+               At_Pos := I;
+               Has_At := True;
+            end if;
+         end loop;
+         if not Has_At or else At_Pos = M_Len - 1 then
+            return False;
+         end if;
+         return Host_In_Constraint
+           (M_First + At_Pos + 1, M_Len - At_Pos - 1, C_First, C_Len);
+      end Email_In_Constraint;
+
+      --  URI: the constraint applies to the host of the authority part.
+      --  host = after "//", up to '/', '?' or '#', minus any "user@" and
+      --  ":port". A URI with no authority matches no constraint.
+      function URI_In_Constraint
+        (U_First : N32; U_Len : N32;
+         C_First : N32; C_Len : N32) return Boolean
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+                  and Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         Auth_Start : N32 := 0;
+         Found      : Boolean := False;
+      begin
+         if U_Len < 3 or else C_Len = 0
+           or else not Can_Read (Cert_DER, U_First, U_Len)
+         then
+            return False;
+         end if;
+         --  Offsets into the URI are kept in Natural (U_Len is bounded
+         --  below by the guard above and above by Natural'Last here), so
+         --  the loop arithmetic is plain signed arithmetic with no modular
+         --  wrap for the provers to worry about; U_First + N32 (Off) stays
+         --  inside the range Can_Read established.
+         if U_Len > N32 (Natural'Last) then
+            return False;
+         end if;
+         --  find "//"
+         for I in N32 range 0 .. U_Len - 2 loop
+            pragma Loop_Invariant (I <= U_Len - 2);
+            if not Found
+              and then Cert_DER (U_First + I) = 16#2F#
+              and then Cert_DER (U_First + I + 1) = 16#2F#
+            then
+               Auth_Start := I + 2;
+               Found := True;
+            end if;
+         end loop;
+         if not Found or else Auth_Start >= U_Len then
+            return False;
+         end if;
+         declare
+            UL    : constant Natural := Natural (U_Len);
+            AS    : constant Natural := Natural (Auth_Start);
+            A_End : Natural := UL;    --  authority ends at '/', '?' or '#'
+            H_Off : Natural := AS;    --  host starts after any "userinfo@"
+            H_End : Natural;          --  host ends at ':' (port) or A_End
+         begin
+            for I in AS .. UL - 1 loop
+               pragma Loop_Invariant (A_End = UL or else A_End < I);
+               pragma Loop_Invariant (A_End >= AS);
+               if A_End = UL
+                 and then Cert_DER (U_First + N32 (I)) in 16#2F# | 16#3F# | 16#23#
+               then
+                  A_End := I;
+               end if;
+            end loop;
+            for I in AS .. A_End - 1 loop
+               pragma Loop_Invariant (H_Off >= AS and H_Off <= A_End);
+               if Cert_DER (U_First + N32 (I)) = 16#40# then
+                  H_Off := I + 1;
+               end if;
+            end loop;
+            H_End := A_End;
+            for I in H_Off .. A_End - 1 loop
+               pragma Loop_Invariant (H_End = A_End or else H_End < I);
+               pragma Loop_Invariant (H_End >= H_Off);
+               if H_End = A_End and then Cert_DER (U_First + N32 (I)) = 16#3A# then
+                  H_End := I;
+               end if;
+            end loop;
+            if H_End <= H_Off then
+               return False;
+            end if;
+            return Host_In_Constraint
+              (U_First + N32 (H_Off), N32 (H_End - H_Off), C_First, C_Len);
+         end;
+      end URI_In_Constraint;
+
+      type IA5_Form is (Form_Email, Form_URI);
+
+      --  Does any GeneralSubtree of the given IA5 form in Subtrees match
+      --  the name at (N_First, N_Len) in Cert_DER?
+      function Any_IA5_Constraint_Matches
+        (Subtrees : Span;
+         Form     : IA5_Form;
+         N_First  : N32;
+         N_Len    : N32) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+                  and Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+      is
+         Tag   : constant Byte := (if Form = Form_Email then GN_RFC822_NAME else GN_URI);
+         P     : N32;
+         S_End : N32;
+      begin
+         if not Subtrees.Present then
+            return False;
+         end if;
+         P := Subtrees.First;
+         S_End := Subtrees.Last + 1;
+         while P < S_End and then P <= Issuer_DER'Last loop
+            pragma Loop_Invariant (P >= Issuer_DER'First and P < S_End);
+            pragma Loop_Variant (Decreases => S_End - P);
+            if Issuer_DER (P) /= TAG_SEQUENCE then
+               exit;
+            end if;
+            declare
+               GS_Len : N32;
+               GS_OK  : Boolean := True;
+               GS_P   : N32 := P + 1;
+            begin
+               if GS_P > Issuer_DER'Last then exit; end if;
+               Parse_Length (Issuer_DER, GS_P, GS_Len, GS_OK);
+               if not GS_OK or else not Can_Read (Issuer_DER, GS_P, GS_Len) then
+                  exit;
+               end if;
+               if GS_P + GS_Len <= P then exit; end if;
+               if GS_P <= Issuer_DER'Last and then Issuer_DER (GS_P) = Tag then
+                  declare
+                     C_Len : N32;
+                     C_OK  : Boolean := True;
+                     C_P   : N32 := GS_P + 1;
+                  begin
+                     if C_P <= Issuer_DER'Last then
+                        Parse_Length (Issuer_DER, C_P, C_Len, C_OK);
+                        if C_OK and then C_Len > 0
+                          and then Can_Read (Issuer_DER, C_P, C_Len)
+                        then
+                           if (Form = Form_Email
+                               and then Email_In_Constraint (N_First, N_Len, C_P, C_Len))
+                             or else (Form = Form_URI
+                                      and then URI_In_Constraint (N_First, N_Len, C_P, C_Len))
+                           then
+                              return True;
+                           end if;
+                        end if;
+                     end if;
+                  end;
+               end if;
+               P := GS_P + GS_Len;
+            end;
+         end loop;
+         return False;
+      end Any_IA5_Constraint_Matches;
+
+      function Has_Email_Constraints (Subtrees : Span) return Boolean
+      is (Walk_Subtrees_Has_Tag (Issuer_DER, Subtrees, GN_RFC822_NAME))
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last;
+
+      function Has_URI_Constraints (Subtrees : Span) return Boolean
+      is (Walk_Subtrees_Has_Tag (Issuer_DER, Subtrees, GN_URI))
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last;
+
+      --  One name of an IA5 form against both subtree lists.
+      function IA5_Name_Allowed
+        (Form : IA5_Form; N_First : N32; N_Len : N32) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+                  and Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+      is
+      begin
+         if Issuer.S_Excluded_Subtrees.Present
+           and then Any_IA5_Constraint_Matches
+                      (Issuer.S_Excluded_Subtrees, Form, N_First, N_Len)
+         then
+            return False;
+         end if;
+         if Issuer.S_Permitted_Subtrees.Present
+           and then (if Form = Form_Email
+                     then Has_Email_Constraints (Issuer.S_Permitted_Subtrees)
+                     else Has_URI_Constraints (Issuer.S_Permitted_Subtrees))
+           and then not Any_IA5_Constraint_Matches
+                          (Issuer.S_Permitted_Subtrees, Form, N_First, N_Len)
+         then
+            return False;
+         end if;
+         return True;
+      end IA5_Name_Allowed;
+
+      --  RFC 5280 4.2.1.10: when the certificate has no rfc822Name SAN,
+      --  rfc822Name constraints apply to any emailAddress attribute
+      --  (1.2.840.113549.1.9.1) in the subject.
+      EMAIL_OID : constant Byte_Seq (0 .. 8) :=
+        (16#2A#, 16#86#, 16#48#, 16#86#, 16#F7#, 16#0D#, 16#01#, 16#09#, 16#01#);
+
+      function Subject_Emails_Allowed return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+                  and Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+      is
+         Subj : constant Span := Cert.S_Subject_Raw;
+         SL   : constant N32 := Span_Length (Subj);
+      begin
+         if not Subj.Present or else SL = 0
+           or else not Can_Read (Cert_DER, Subj.First, SL)
+         then
+            return True;
+         end if;
+         declare
+            P     : N32 := Subj.First;
+            E     : constant N32 := Subj.First + SL;
+            Fuel  : N32 := SL;
+            OID_S, OID_L, VS, VL, SE : N32;
+            VT    : Byte;
+            MV, OK : Boolean;
+         begin
+            while P < E loop
+               pragma Loop_Variant (Decreases => Fuel);
+               pragma Loop_Invariant (P >= Cert_DER'First);
+               declare
+                  Old_P : constant N32 := P;
+               begin
+                  pragma Warnings (Off, """SE"" is set by ""Next_ATV"" but not used");
+                  Next_ATV (Cert_DER, P, E, OID_S, OID_L, VT, VS, VL, SE, MV, OK);
+                  pragma Warnings (On, """SE"" is set by ""Next_ATV"" but not used");
+                  if not OK or else P <= Old_P then
+                     return False;
+                  end if;
+               end;
+               if Fuel = 0 then
+                  return False;
+               end if;
+               Fuel := Fuel - 1;
+               if not MV and then OID_L = EMAIL_OID'Length
+                 and then Can_Read (Cert_DER, OID_S, OID_L)
+                 and then OID_L - 1 <= Cert_DER'Last - OID_S
+               then
+                  declare
+                     Same : Boolean := True;
+                  begin
+                     for I in N32 range 0 .. OID_L - 1 loop
+                        pragma Loop_Invariant (I <= OID_L - 1);
+                        if I > Cert_DER'Last - OID_S
+                          or else Cert_DER (OID_S + I) /= EMAIL_OID (I)
+                        then
+                           Same := False;
+                        end if;
+                     end loop;
+                     if Same and then VL > 0 and then Can_Read (Cert_DER, VS, VL)
+                       and then not IA5_Name_Allowed (Form_Email, VS, VL)
+                     then
+                        return False;
+                     end if;
+                  end;
+               end if;
+            end loop;
+         end;
+         return True;
+      end Subject_Emails_Allowed;
+
       Max_NC_Work : constant := 100_000;
 
       function NC_Work_Estimate return N32 is
@@ -1605,22 +2069,6 @@ is
          then
             return False;
          end if;
-      end if;
-
-      --  RFC 5280 §4.2.1.10: if excluded subtrees contain types
-      --  we don't fully check (email, URI, dirName),
-      --  conservatively reject.
-      if Issuer.S_Excluded_Subtrees.Present
-         and then Has_Unsupported_Constraints (Issuer.S_Excluded_Subtrees)
-      then
-         return False;
-      end if;
-
-      --  Likewise for permitted subtrees with unsupported types
-      if Issuer.S_Permitted_Subtrees.Present
-         and then Has_Unsupported_Constraints (Issuer.S_Permitted_Subtrees)
-      then
-         return False;
       end if;
 
       --  DNS/IP name constraints must be evaluated against every name of the
@@ -1724,63 +2172,113 @@ is
       end if;
 
       --  Check directoryName constraints by walking the SAN extension DER
-      if (Issuer.S_Excluded_Subtrees.Present
-            and then Has_DirName_Constraints (Issuer.S_Excluded_Subtrees))
-         or (Issuer.S_Permitted_Subtrees.Present
-               and then Has_DirName_Constraints (Issuer.S_Permitted_Subtrees))
-      then
-         --  Walk cert SAN extension for directoryName entries
-         if Cert.SAN_Ext_Value.Present
-            and then Can_Read (Cert_DER, Cert.SAN_Ext_Value.First,
-                               Span_Length (Cert.SAN_Ext_Value))
+      --  directoryName constraints apply to the subject DN itself
+      --  (RFC 5280 6.1.3 (b)) and to every dirName SAN.
+      declare
+         Any_Dir : constant Boolean :=
+           (Issuer.S_Excluded_Subtrees.Present
+              and then Has_DirName_Constraints (Issuer.S_Excluded_Subtrees))
+           or (Issuer.S_Permitted_Subtrees.Present
+                 and then Has_DirName_Constraints (Issuer.S_Permitted_Subtrees));
+         Subj    : constant Span := Cert.S_Subject_Raw;
+      begin
+         --  An EMPTY subject is legal under permitted directoryName
+         --  subtrees (RFC 5280 4.2.1.10: the constraint then applies to
+         --  the directoryName SANs, checked in the SAN walk); PKITS
+         --  4.13.14 has exactly that shape and expects Valid.
+         if Any_Dir and then Subj.Present and then Span_Length (Subj) > 0
+           and then Can_Read (Cert_DER, Subj.First, Span_Length (Subj))
          then
-            declare
-               SP    : N32 := Cert.SAN_Ext_Value.First;
-               SE    : constant N32 := Cert.SAN_Ext_Value.Last;
-               S_OK  : Boolean := True;
-            begin
-               while S_OK and then SP < SE and then SP <= Cert_DER'Last loop
-                  pragma Loop_Variant (Increases => SP);
-                  pragma Loop_Invariant (SP <= Cert_DER'Last);
-                  pragma Loop_Invariant (Cert_DER'Last < N32'Last);
-                  declare
-                     ST     : constant Byte := Cert_DER (SP);
-                     SL     : N32;
-                     SL_OK  : Boolean := True;
-                     SL_P   : N32 := SP + 1;
-                  begin
-                     if SL_P > Cert_DER'Last then exit; end if;
-                     Parse_Length (Cert_DER, SL_P, SL, SL_OK);
-                     if not SL_OK or SL = 0 then exit; end if;
-                     if not Can_Read (Cert_DER, SL_P, SL) then exit; end if;
-                     if SL_P + SL <= SP then exit; end if;
-
-                     if ST = GN_DIR_NAME then
-                        --  Check excluded
-                        if Issuer.S_Excluded_Subtrees.Present
-                           and then Any_DirName_Constraint_Matches
-                             (Issuer.S_Excluded_Subtrees, SL_P, SL)
-                        then
-                           return False;
-                        end if;
-                        --  Check permitted
-                        if Issuer.S_Permitted_Subtrees.Present
-                           and then Has_DirName_Constraints
-                             (Issuer.S_Permitted_Subtrees)
-                           and then not Any_DirName_Constraint_Matches
-                             (Issuer.S_Permitted_Subtrees, SL_P, SL)
-                        then
-                           return False;
-                        end if;
-                     end if;
-
-                     SP := SL_P + SL;
-                  end;
-               end loop;
-            end;
+            if Issuer.S_Excluded_Subtrees.Present
+              and then Any_DirName_Constraint_Matches
+                (Issuer.S_Excluded_Subtrees, Subj.First, Span_Length (Subj))
+            then
+               return False;
+            end if;
+            if Issuer.S_Permitted_Subtrees.Present
+              and then Has_DirName_Constraints (Issuer.S_Permitted_Subtrees)
+              and then not Any_DirName_Constraint_Matches
+                (Issuer.S_Permitted_Subtrees, Subj.First, Span_Length (Subj))
+            then
+               return False;
+            end if;
          end if;
+      end;
+
+      --  rfc822Name constraints fall back to the subject emailAddress
+      --  attribute when the certificate has no rfc822Name SAN.
+      if not Cert.SAN_Has_Email
+        and then ((Issuer.S_Excluded_Subtrees.Present
+                     and then Has_Email_Constraints (Issuer.S_Excluded_Subtrees))
+                  or (Issuer.S_Permitted_Subtrees.Present
+                        and then Has_Email_Constraints (Issuer.S_Permitted_Subtrees)))
+        and then not Subject_Emails_Allowed
+      then
+         return False;
       end if;
 
+      --  One pass over the SAN list for the forms that live only there:
+      --  dirName [4], rfc822Name [1], uniformResourceIdentifier [6].
+      if Cert.SAN_Ext_Value.Present
+         and then Can_Read (Cert_DER, Cert.SAN_Ext_Value.First,
+                            Span_Length (Cert.SAN_Ext_Value))
+      then
+         declare
+            SP    : N32 := Cert.SAN_Ext_Value.First;
+            SE    : constant N32 := Cert.SAN_Ext_Value.Last;
+         begin
+            while SP < SE and then SP <= Cert_DER'Last loop
+               pragma Loop_Variant (Increases => SP);
+               pragma Loop_Invariant (SP <= Cert_DER'Last);
+               pragma Loop_Invariant (Cert_DER'Last < N32'Last);
+               declare
+                  ST     : constant Byte := Cert_DER (SP);
+                  SL     : N32;
+                  SL_OK  : Boolean := True;
+                  SL_P   : N32 := SP + 1;
+               begin
+                  if SL_P > Cert_DER'Last then exit; end if;
+                  Parse_Length (Cert_DER, SL_P, SL, SL_OK);
+                  if not SL_OK or SL = 0 then exit; end if;
+                  if not Can_Read (Cert_DER, SL_P, SL) then exit; end if;
+                  if SL_P + SL <= SP then exit; end if;
+                  if ST = GN_DIR_NAME then
+                     declare
+                        CF, CL : N32;
+                        C_OK   : Boolean;
+                     begin
+                        Name_Content (Cert_DER, SL_P, SL, CF, CL, C_OK);
+                        if C_OK then
+                           if Issuer.S_Excluded_Subtrees.Present
+                              and then Any_DirName_Constraint_Matches
+                                (Issuer.S_Excluded_Subtrees, CF, CL)
+                           then
+                              return False;
+                           end if;
+                           if Issuer.S_Permitted_Subtrees.Present
+                              and then Has_DirName_Constraints
+                                (Issuer.S_Permitted_Subtrees)
+                              and then not Any_DirName_Constraint_Matches
+                                (Issuer.S_Permitted_Subtrees, CF, CL)
+                           then
+                              return False;
+                           end if;
+                        end if;
+                     end;
+                  elsif ST = GN_RFC822_NAME then
+                     if not IA5_Name_Allowed (Form_Email, SL_P, SL) then
+                        return False;
+                     end if;
+                  elsif ST = GN_URI then
+                     if not IA5_Name_Allowed (Form_URI, SL_P, SL) then
+                        return False;
+                     end if;
+                  end if;
+                  SP := SL_P + SL;
+               end;
+            end loop;
+         end;
+      end if;
       return True;
    end Satisfies_Name_Constraints;
 

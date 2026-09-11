@@ -105,25 +105,35 @@ is
    --  total number present in the response.
    function Response_Count       (V : OCSP_View) return Natural;
    function Total_Response_Count (V : OCSP_View) return N32;
+   --  "R is one of the SingleResponses stored in V." Together with
+   --  Spans_Valid (V, DER'Last) this gives Single_Spans_Valid (R,
+   --  DER'Last) for any DER the view was parsed from -- the fact callers
+   --  need -- without quantifying over every N32 value. (The earlier
+   --  form, (for all L in N32 => ...), was sound and proved but, executed
+   --  under -gnata, iterated 2^31 times per call: 40 s per response.
+   --  Contracts must stay cheap to run, not just true.)
+   function Is_Stored_Response
+     (V : OCSP_View; R : Single_Response) return Boolean;
+
    function Get_Response
      (V : OCSP_View; Index : Positive) return Single_Response
    with Pre  => Index <= Response_Count (V)
                 and Response_Count (V) <= Max_Single_Responses,
-        Post => (for all L in N32 =>
-                   (if Spans_Valid (V, L)
-                    then Single_Spans_Valid (Get_Response'Result, L)));
+        Post => Is_Stored_Response (V, Get_Response'Result);
 
    --  certs [0] EXPLICIT SEQUENCE OF Certificate OPTIONAL: spans of the
    --  full Certificate TLVs (parse each with X509.Parse after copying
    --  into a zero-based buffer).
    function Embedded_Cert_Count (V : OCSP_View) return Natural;
+   --  "S is one of the embedded-certificate spans stored in V" (same
+   --  reasoning as Is_Stored_Response).
+   function Is_Embedded_Cert_Span (V : OCSP_View; S : Span) return Boolean;
+
    function Embedded_Cert
      (V : OCSP_View; Index : Positive) return Span
    with Pre  => Index <= Embedded_Cert_Count (V)
                 and Embedded_Cert_Count (V) <= Max_Embedded_Certs,
-        Post => (for all L in N32 =>
-                   (if Spans_Valid (V, L)
-                    then Span_In_Range (Embedded_Cert'Result, L)));
+        Post => Is_Embedded_Cert_Span (V, Embedded_Cert'Result);
 
    --  id-pkix-ocsp-nonce (4.4.1) response extension, extnValue content
    function Has_Nonce (V : OCSP_View) return Boolean;
@@ -178,5 +188,12 @@ private
                   Span_In_Range (V.Certs (I), DER_Last)));
 
    function Is_Valid (V : OCSP_View) return Boolean is (V.Valid_Flag);
+
+   function Is_Stored_Response
+     (V : OCSP_View; R : Single_Response) return Boolean
+   is (for some I in 1 .. Max_Single_Responses => V.Responses (I) = R);
+
+   function Is_Embedded_Cert_Span (V : OCSP_View; S : Span) return Boolean
+   is (for some I in 1 .. Max_Embedded_Certs => V.Certs (I) = S);
 
 end X509.OCSP;
