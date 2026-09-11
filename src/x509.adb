@@ -292,12 +292,13 @@ is
          return False;
       end if;
 
-      --  RFC 5280 §4.2.1.6: if only identity is email, subject must be empty
-      if Cert.SAN_Has_Email and then Cert.SAN_Num = 0
-         and then Cert.Has_Subject
-      then
-         return False;
-      end if;
+      --  (Removed 2026-09-10.) An earlier check here rejected a certificate
+      --  with a non-empty subject whose SAN carried only an rfc822Name.
+      --  RFC 5280 4.2.1.6 says the opposite: when the ONLY identity is an
+      --  alternative name the subject must be empty -- it does not forbid
+      --  a subject DN next to an email-only SAN (S/MIME, PKITS 4.13.2x).
+      --  Server-certificate fitness is Cert_Verify's job (Err_Missing_SAN
+      --  in Mode_WebPKI), not a structural property.
 
       --  keyCertSign in Key Usage requires CA (RFC 5280 Section 4.2.1.3)
       if Has_Key_Cert_Sign_Without_CA (Cert) then
@@ -461,6 +462,16 @@ is
 
    function Has_EKU_Client_Auth (Cert : Certificate) return Boolean is
      (Cert.EKU_Has_Client_Auth);
+   function Has_EKU_OCSP_Signing (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_OCSP_Signing);
+   function Must_Staple (Cert : Certificate) return Boolean is
+     (Cert.Requires_Staple);
+   function Subject_Public_Key_Bits (Cert : Certificate) return Span is
+     (Cert.S_SPKI_Bits);
+   function Issuer_Raw  (Cert : Certificate) return Span is (Cert.S_Issuer_Raw);
+   function CRL_Distribution_Points (Cert : Certificate) return Span is
+     (Cert.S_CRL_DP);
+   function Subject_Raw (Cert : Certificate) return Span is (Cert.S_Subject_Raw);
 
    function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean is
      (Cert.EKU_Has_Any);

@@ -8,6 +8,7 @@ tests/smoke/bin/
 tests/smoke/obj/
 tests/smoke/alire/
 tests/smoke/config/
+tests/smoke/revocation/bin/
 
 # Ignore generated .ads and .adb
 *b__*
