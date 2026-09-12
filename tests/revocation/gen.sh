@@ -4,6 +4,7 @@
 set -euo pipefail
 OUT="${1:-${TMPDIR:-/tmp}/sparkx509-revocation}"
 rm -rf "$OUT"; mkdir -p "$OUT/ca"; cd "$OUT"
+GEN_EPOCH=$(date -u +%s)   # stamped before any openssl "now"; the test clock is derived from it
 export OPENSSL_CONF=/dev/null
 
 cat > ca.cnf <<'CNF'
@@ -146,4 +147,12 @@ q openssl ocsp -issuer other.crt -cert other.crt -no_nonce -reqout req_other.der
 q openssl ocsp -index ca/index.txt -CA ca.crt -rsigner ca.crt -rkey ca.key \
   -reqin req_other.der -respout ocsp_unauthorized.der -ndays 7 || true
 for f in ca good revoked staple ocsp shard1 shard2; do openssl x509 -in $f.crt -outform DER -out $f.der; done
+# Fixture clock for consumers (sparktls test_revocation): line 1 = generation
+# time + 1 h (safely after every thisUpdate, inside the 7-day nextUpdate),
+# line 2 = generation time + 30 d (past nextUpdate, for the "expired" cases).
+# Format per line: "YYYY MM DD HH MM SS" in UTC.
+{
+  date -u -d @$((GEN_EPOCH + 3600))      "+%Y %m %d %H %M %S"
+  date -u -d @$((GEN_EPOCH + 30*86400))  "+%Y %m %d %H %M %S"
+} > now.txt
 echo "fixtures in $OUT"; ls *.der
