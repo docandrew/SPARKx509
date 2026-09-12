@@ -327,9 +327,19 @@ is
    --  RFC 5280 §4.2.1.3: keyCertSign bit must be set.
    function Issuer_May_Sign (Issuer : Certificate) return Boolean;
 
-   --  Check if the issuer's EKU (if present) is compatible with cert signing.
-   --  RFC 5280 §4.2.1.12: if EKU present, must not restrict to non-signing.
-   function Issuer_EKU_Allows_Signing (Issuer : Certificate) return Boolean;
+   --  The purpose a chain is being validated for, as it applies to the
+   --  EKU of the certificates along it.
+   type EKU_Purpose is (EKU_Server_Auth, EKU_Client_Auth, EKU_Any_Purpose);
+
+   --  Check if the issuer's EKU (if present) is compatible with signing a
+   --  certificate for Purpose. RFC 5280 §4.2.1.12 leaves EKU on CA
+   --  certificates undefined; CA/Browser Forum, Chromium and NSS all read
+   --  it as a constraint that must carry the leaf's purpose (or
+   --  anyExtendedKeyUsage) in every EKU-bearing intermediate. Absent EKU
+   --  is unrestricted. EKU_Any_Purpose accepts either TLS purpose.
+   function Issuer_EKU_Allows_Signing
+     (Issuer  : Certificate;
+      Purpose : EKU_Purpose := EKU_Any_Purpose) return Boolean;
 
    --  Check if the cert has EKU with id-kp-serverAuth (for TLS server validation).
    function Has_EKU_Server_Auth (Cert : Certificate) return Boolean;
