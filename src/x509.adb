@@ -436,7 +436,9 @@ is
       return (Issuer.Ext_Key_Usage and 16#0400#) /= 0;
    end Issuer_May_Sign;
 
-   function Issuer_EKU_Allows_Signing (Issuer : Certificate) return Boolean is
+   function Issuer_EKU_Allows_Signing
+     (Issuer  : Certificate;
+      Purpose : EKU_Purpose := EKU_Any_Purpose) return Boolean is
    begin
       --  No EKU means unrestricted
       if not Issuer.Ext_Has_EKU then
@@ -447,14 +449,17 @@ is
          return True;
       end if;
       --  RFC 5280 Section 4.2.1.12: If EKU is present on a CA cert,
-      --  it constrains what the CA can sign. A CA with serverAuth
-      --  or clientAuth EKU can sign TLS certs. Google, Let's Encrypt,
-      --  and other major CAs commonly include these on intermediates.
-      if Issuer.EKU_Has_Server_Auth or else Issuer.EKU_Has_Client_Auth then
-         return True;
-      end if;
-      --  EKU present but no recognized signing-related purpose
-      return False;
+      --  it constrains what the CA can sign. Google, Let's Encrypt,
+      --  and other major CAs commonly include serverAuth/clientAuth on
+      --  intermediates. The intermediate must carry the purpose the
+      --  chain is validated for: a clientAuth-only intermediate does
+      --  not sign server certificates, and vice versa.
+      case Purpose is
+         when EKU_Server_Auth  => return Issuer.EKU_Has_Server_Auth;
+         when EKU_Client_Auth  => return Issuer.EKU_Has_Client_Auth;
+         when EKU_Any_Purpose  =>
+            return Issuer.EKU_Has_Server_Auth or else Issuer.EKU_Has_Client_Auth;
+      end case;
    end Issuer_EKU_Allows_Signing;
 
    function Has_EKU_Server_Auth (Cert : Certificate) return Boolean is

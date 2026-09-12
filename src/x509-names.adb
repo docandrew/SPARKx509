@@ -1059,6 +1059,12 @@ is
       --  conservative: a wildcard must not satisfy a narrower permitted
       --  subtree such as "bar.example.com", because it could also match
       --  names outside that subtree.
+      --  A constraint with a leading dot (".example.com") is malformed:
+      --  RFC 5280 4.2.1.10 allows the leading period for URI constraints
+      --  only. DNS_Subtrees_Well_Formed rejects the certificate outright
+      --  (before this the dot was compared literally, which happened to
+      --  fail closed on the permitted side but failed OPEN on the
+      --  excluded side).
       function DNS_Matches_Constraint
         (DNS_Span   : Span;
          Cons_First : N32;
@@ -1228,6 +1234,82 @@ is
             return True;
          end;
       end DNS_Matches_Constraint;
+
+      --  Structural check of a subtrees span: every GeneralSubtree is a
+      --  readable SEQUENCE that makes forward progress and ends exactly
+      --  at the span, and every dNSName base has a readable, non-empty
+      --  body that does not start with '.' (RFC 5280 4.2.1.10: a leading
+      --  period is a URI-constraint form, not a dNSName one; x509-limbo
+      --  nc::invalid-dnsname-leading-period). The match walkers below
+      --  stop silently on anything else,
+      --  which is fail-closed for permitted subtrees but fail-OPEN for
+      --  excluded ones (a constraint that cannot be decoded excludes
+      --  nothing). Satisfies_Name_Constraints runs this first and rejects
+      --  the certificate instead: an issuer whose constraints we cannot
+      --  read cannot be shown to permit this name.
+      function DNS_Subtrees_Well_Formed (Subtrees : Span) return Boolean
+      with Pre => Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last
+      is
+         P     : N32;
+         S_End : N32;
+      begin
+         if not Subtrees.Present then
+            return True;
+         end if;
+         P := Subtrees.First;
+         S_End := Subtrees.Last + 1;
+         while P < S_End and then P <= Issuer_DER'Last loop
+            pragma Loop_Invariant
+              (Issuer_DER'First = 0 and Issuer_DER'Last < N32'Last);
+            pragma Loop_Invariant (P >= Issuer_DER'First and P < S_End);
+            pragma Loop_Variant (Decreases => S_End - P);
+            if Issuer_DER (P) /= TAG_SEQUENCE then
+               return False;
+            end if;
+            declare
+               GS_Len : N32;
+               GS_End : N32;
+               GS_OK  : Boolean := True;
+               GS_P   : N32;
+            begin
+               GS_P := P + 1;
+               if GS_P > Issuer_DER'Last then
+                  return False;
+               end if;
+               Parse_Length (Issuer_DER, GS_P, GS_Len, GS_OK);
+               if not GS_OK or else not Can_Read (Issuer_DER, GS_P, GS_Len)
+               then
+                  return False;
+               end if;
+               GS_End := GS_P + GS_Len;
+               if GS_End <= P then
+                  return False;
+               end if;
+               if GS_P <= Issuer_DER'Last
+                  and then Issuer_DER (GS_P) = GN_DNS_NAME
+               then
+                  declare
+                     DN_Len : N32;
+                     DN_OK  : Boolean := True;
+                     DN_P   : N32 := GS_P + 1;
+                  begin
+                     if DN_P > Issuer_DER'Last then
+                        return False;
+                     end if;
+                     Parse_Length (Issuer_DER, DN_P, DN_Len, DN_OK);
+                     if not DN_OK or else DN_Len = 0
+                        or else not Can_Read (Issuer_DER, DN_P, DN_Len)
+                        or else Issuer_DER (DN_P) = 16#2E#
+                     then
+                        return False;
+                     end if;
+                  end;
+               end if;
+               P := GS_End;
+            end;
+         end loop;
+         return P = S_End;
+      end DNS_Subtrees_Well_Formed;
 
       --  Walk a subtrees span in Issuer_DER and check if any dNSName
       --  entry matches the given cert DNS SAN entry.
@@ -2095,6 +2177,15 @@ is
          return False;
       end if;
 
+      --  Undecodable subtrees reject the certificate (see
+      --  DNS_Subtrees_Well_Formed): never let a walker's silent stop
+      --  read as "no constraint applies".
+      if not DNS_Subtrees_Well_Formed (Issuer.S_Permitted_Subtrees)
+         or else not DNS_Subtrees_Well_Formed (Issuer.S_Excluded_Subtrees)
+      then
+         return False;
+      end if;
+
       --  Check excluded subtrees: cert DNS names must NOT match any
       if Issuer.S_Excluded_Subtrees.Present then
          for I in 1 .. Cert.SAN_Num loop
@@ -2151,6 +2242,29 @@ is
                end if;
             end if;
          end loop;
+      end if;
+
+      --  Permitted dNSName subtrees also bind a CN-only leaf. Hostname
+      --  matching falls back to the Subject CN when an end-entity
+      --  certificate has no SANs (Matches_Hostname), so the CN is the
+      --  name being asserted and MUST fall within the permitted subtrees,
+      --  exactly as a dNSName SAN would. Mirrors the excluded-subtree CN
+      --  check above; before this a CN-only leaf bypassed permitted
+      --  subtrees. End-entity only: a CA's CN is never a host name
+      --  (x509-limbo nc-forbids-alternate-chain-ica).
+      if Issuer.S_Permitted_Subtrees.Present
+         and then Has_DNS_Constraints (Issuer.S_Permitted_Subtrees)
+         and then not Is_CA (Cert)
+         and then Cert.SAN_Num = 0
+         and then Cert.IP_SAN_Num = 0
+         and then Cert.S_Subject_CN.Present
+      then
+         if not Any_DNS_Constraint_Matches
+              (Issuer.S_Permitted_Subtrees, Cert.S_Subject_CN,
+               Excluded => False)
+         then
+            return False;
+         end if;
       end if;
 
       --  Check permitted subtrees: if there are IP constraints AND

@@ -146,7 +146,25 @@ q openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 
 q openssl ocsp -issuer other.crt -cert other.crt -no_nonce -reqout req_other.der
 q openssl ocsp -index ca/index.txt -CA ca.crt -rsigner ca.crt -rkey ca.key \
   -reqin req_other.der -respout ocsp_unauthorized.der -ndays 7 || true
-for f in ca good revoked staple ocsp shard1 shard2; do openssl x509 -in $f.crt -outform DER -out $f.der; done
+# Intermediate CA "sub" under the root, a leaf under it, an (empty) CRL
+# signed by sub that covers that leaf, and a root CRL that lists sub as
+# revoked. Consumers use these to check that revocation is evaluated
+# for every certificate below the trust anchor, not the leaf alone.
+# Done last so the root's earlier CRL (crl.der) and OCSP responses are
+# unaffected by sub's revocation.
+q openssl req -newkey rsa:2048 -nodes -keyout sub.key -out sub.csr -config ca.cnf -subj "/CN=SPARKx509 Sub CA"
+q openssl ca -batch -config ca.cnf -extensions ext_ca -in sub.csr -out sub.crt -notext
+mkdir -p subca; touch subca/index.txt; echo 2000 > subca/serial; echo 01 > subca/crlnumber
+sed 's#dir = ./ca$#dir = ./subca#; s#^certificate = ca.crt$#certificate = sub.crt#; s#^private_key = ca.key$#private_key = sub.key#' ca.cnf > subca.cnf
+q openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout sub_leaf.key -out sub_leaf.csr \
+  -config ca.cnf -subj "/CN=subleaf.test"
+q openssl ca -batch -config subca.cnf -extensions ext_leaf -in sub_leaf.csr -out sub_leaf.crt -notext
+q openssl ca -batch -config subca.cnf -gencrl -out crl_sub_empty.pem
+openssl crl -in crl_sub_empty.pem -outform DER -out crl_sub_empty.der
+q openssl ca -batch -config ca.cnf -revoke sub.crt -crl_reason cACompromise
+q openssl ca -batch -config ca.cnf -gencrl -out crl_root_sub_revoked.pem
+openssl crl -in crl_root_sub_revoked.pem -outform DER -out crl_root_sub_revoked.der
+for f in ca good revoked staple ocsp shard1 shard2 sub sub_leaf; do openssl x509 -in $f.crt -outform DER -out $f.der; done
 # Fixture clock for consumers (sparktls test_revocation): line 1 = generation
 # time + 1 h (safely after every thisUpdate, inside the 7-day nextUpdate),
 # line 2 = generation time + 30 d (past nextUpdate, for the "expired" cases).
