@@ -645,6 +645,20 @@ is
                         then
                            C.Bad_DER := True;
                         end if;
+                        --  A legitimate sign-padding zero (e >= 2^31, e.g.
+                        --  00 80 00 00 01) is not part of the value.
+                        if Exp_Len >= 2 and then DER (Pos) = 0 then
+                           Pos := Pos + 1;
+                           Exp_Len := Exp_Len - 1;
+                        end if;
+                        --  RFC 8017 3.1 / RFC 3279 2.3.1: e is an odd
+                        --  integer >= 3, and this stack holds it in 32
+                        --  bits. Anything longer used to be silently
+                        --  truncated to its leading four octets, i.e.
+                        --  reinterpreted as a different exponent.
+                        if Exp_Len > 4 then
+                           C.Bad_PubKey := True;
+                        end if;
                         C.PK_RSA_Exp := 0;
                         declare
                            Limit : constant N32 := N32'Min (Exp_Len, 4);
@@ -663,6 +677,14 @@ is
                               end if;
                            end loop;
                         end;
+                        --  e = 1 turns RSAVP1 into the identity (any
+                        --  signature verifies against its own bytes), e = 0
+                        --  into the constant 1, and an even e has no inverse
+                        --  mod lambda(n). The verifier rejects these too;
+                        --  refusing the certificate is the earlier gate.
+                        if C.PK_RSA_Exp < 3 or else (C.PK_RSA_Exp and 1) = 0 then
+                           C.Bad_PubKey := True;
+                        end if;
                         pragma Warnings (Off, """Pos"" is set by ""Skip"" but not used");
                         Skip (DER, Pos, Exp_Len, Valid);
                         pragma Warnings (On, """Pos"" is set by ""Skip"" but not used");
