@@ -4,11 +4,12 @@ alire/
 config/
 scratch/
 tests/tests
-tests/smoke/bin/
-tests/smoke/obj/
-tests/smoke/alire/
-tests/smoke/config/
-tests/smoke/revocation/bin/
+# Every test crate under tests/ (smoke, nc, revocation, ...) builds into
+# its own bin/ and obj/ and gets an Alire cache; none of that is source.
+tests/*/bin/
+tests/*/obj/
+tests/*/alire/
+tests/*/config/
 
 # Ignore generated .ads and .adb
 *b__*

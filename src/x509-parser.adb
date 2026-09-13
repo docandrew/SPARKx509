@@ -211,12 +211,16 @@ is
 
       Pos := Pos + Len;
 
-      if Bad then return; end if;
-      if M not in 1 .. 12 then return; end if;
-      if D < 1 or else D > Max_Days (M) then return; end if;
-      if Hr > 23 then return; end if;
-      if Mn > 59 then return; end if;
-      if Sc > 59 then return; end if;
+      --  A syntactically present but semantically invalid time is a
+      --  parse failure. Until 2026-09 these returns left T all-zero with
+      --  OK untouched, so an invalid notBefore parsed as year 0 and was
+      --  accepted (notAfter happened to fail closed).
+      if Bad then OK := False; return; end if;
+      if M not in 1 .. 12 then OK := False; return; end if;
+      if D < 1 or else D > Max_Days (M) then OK := False; return; end if;
+      if Hr > 23 then OK := False; return; end if;
+      if Mn > 59 then OK := False; return; end if;
+      if Sc > 59 then OK := False; return; end if;
 
       T := (Year => Y, Month => M, Day => D,
             Hour => Hr, Minute => Mn, Second => Sc);
@@ -2608,6 +2612,12 @@ is
                Parse_Length (DER, Pos, Sig_Len, Valid);
                if Valid and then Sig_Len > 1 and then Pos <= DER'Last then
                   Sig_Unused := DER (Pos);
+                  --  RFC 5280 4.1.1.3: the signature BIT STRING has no
+                  --  unused bits. Anything else is a malleable encoding
+                  --  (the same bytes could carry two "signatures").
+                  if Sig_Unused /= 0 then
+                     C.Bad_DER := True;
+                  end if;
                   Pos := Pos + 1;
                   Sig_Len := Sig_Len - 1;
                   Copy_Bytes (DER, Pos, Sig_Len, C.Sig_Buf, C.Sig_Buf_Len);
