@@ -1,0 +1,14 @@
+with "../../sparkx509.gpr";
+
+project NC is
+   for Create_Missing_Dirs use "True";
+   for Object_Dir use "obj";
+   for Exec_Dir use "bin";
+   for Source_Dirs use (".");
+   for Main use ("nc_test.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        ("-g", "-Og", "-gnata", "-gnat2022");
+   end Compiler;
+end NC;

@@ -1,0 +1,10 @@
+name = "sparkx509_nc"
+version = "0.0.0"
+description = "Name-constraint tests for SPARKx509"
+project-files = ["nc.gpr"]
+
+[[depends-on]]
+sparkx509 = "*"
+
+[[pins]]
+sparkx509 = { path = "../.." }
