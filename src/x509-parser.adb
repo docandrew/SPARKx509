@@ -2325,7 +2325,14 @@ is
                                  NC_P := NC_P + 1;
                                  if NC_P <= DER'Last then
                                     Parse_Length (DER, NC_P, PT_Len, NC_OK);
-                                    if NC_OK and then PT_Len > 0
+                                    --  GeneralSubtrees ::= SEQUENCE SIZE (1..MAX):
+                                    --  a present-but-empty permittedSubtrees
+                                    --  is malformed (RFC 5280 4.2.1.10;
+                                    --  x509-limbo rfc5280--nc--permitted-
+                                    --  empty-sequence-excluded-nonempty).
+                                    if NC_OK and then PT_Len = 0 then
+                                       C.Bad_Ext_Content := True;
+                                    elsif NC_OK
                                        and then Can_Read (DER, NC_P, PT_Len)
                                     then
                                        C.S_Permitted_Subtrees :=
@@ -2348,7 +2355,12 @@ is
                                  NC_P := NC_P + 1;
                                  if NC_P <= DER'Last then
                                     Parse_Length (DER, NC_P, ET_Len, NC_OK);
-                                    if NC_OK and then ET_Len > 0
+                                    --  Same rule for excludedSubtrees
+                                    --  (x509-limbo rfc5280--nc--permitted-
+                                    --  nonempty-excluded-empty-sequence).
+                                    if NC_OK and then ET_Len = 0 then
+                                       C.Bad_Ext_Content := True;
+                                    elsif NC_OK
                                        and then Can_Read (DER, NC_P, ET_Len)
                                     then
                                        C.S_Excluded_Subtrees :=
