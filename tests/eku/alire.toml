@@ -1,0 +1,10 @@
+name = "sparkx509_eku"
+version = "0.0.0"
+description = "Extended key usage tests for SPARKx509"
+project-files = ["eku.gpr"]
+
+[[depends-on]]
+sparkx509 = "*"
+
+[[pins]]
+sparkx509 = { path = "../.." }

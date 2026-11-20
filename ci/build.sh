@@ -12,3 +12,6 @@ alr -n --no-tty build
 
 echo "== smoke tests =="
 tests/smoke/run.sh
+
+echo "== extended key usage tests =="
+tests/eku/run.sh
