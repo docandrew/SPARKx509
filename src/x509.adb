@@ -472,6 +472,12 @@ is
      (Cert.EKU_Has_OCSP_Signing);
    function Has_EKU_Code_Signing (Cert : Certificate) return Boolean is
      (Cert.EKU_Has_Code_Signing);
+   function Has_EKU_Email_Protection (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_Email_Protection);
+   function Has_EKU_Time_Stamping (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_Time_Stamping);
+   function Has_EKU_Precert_Signing (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_Precert_Signing);
    function Must_Staple (Cert : Certificate) return Boolean is
      (Cert.Requires_Staple);
    function Subject_Public_Key_Bits (Cert : Certificate) return Span is

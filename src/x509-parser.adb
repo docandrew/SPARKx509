@@ -1953,6 +1953,27 @@ is
                   then
                      C.EKU_Has_Code_Signing := True;
                   end if;
+                  --  Track id-kp-emailProtection
+                  if OID_Match
+                       (DER, EKU_Start, EKU_OLen,
+                        OID_KP_EMAIL_PROTECTION)
+                  then
+                     C.EKU_Has_Email_Protection := True;
+                  end if;
+                  --  Track id-kp-timeStamping
+                  if OID_Match
+                       (DER, EKU_Start, EKU_OLen,
+                        OID_KP_TIME_STAMPING)
+                  then
+                     C.EKU_Has_Time_Stamping := True;
+                  end if;
+                  --  Track Precertificate Signing Certificate (RFC 6962 3.1)
+                  if OID_Match
+                       (DER, EKU_Start, EKU_OLen,
+                        OID_CT_PRECERT_SIGNING)
+                  then
+                     C.EKU_Has_Precert_Signing := True;
+                  end if;
                   --  Track anyExtendedKeyUsage
                   if OID_Match
                        (DER, EKU_Start, EKU_OLen,
@@ -2735,6 +2756,9 @@ is
                          EKU_Has_Client_Auth => False,
                          EKU_Has_OCSP_Signing => False,
                          EKU_Has_Code_Signing => False,
+                         EKU_Has_Email_Protection => False,
+                         EKU_Has_Time_Stamping => False,
+                         EKU_Has_Precert_Signing => False,
                          EKU_Is_Critical     => False,
                          Bad_CRL_DP          => False,
                          SAN_Critical_With_Subject => False,

@@ -160,9 +160,21 @@ is
    --  id-kp-codeSigning 1.3.6.1.5.5.7.3.3 (RFC 5280 4.2.1.12)
    OID_KP_CODE_SIGNING : constant Byte_Seq (0 .. 7) :=
      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#03#, 16#03#);
+   --  id-kp-emailProtection 1.3.6.1.5.5.7.3.4 (RFC 5280 4.2.1.12)
+   OID_KP_EMAIL_PROTECTION : constant Byte_Seq (0 .. 7) :=
+     (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#03#, 16#04#);
+   --  id-kp-timeStamping 1.3.6.1.5.5.7.3.8 (RFC 5280 4.2.1.12)
+   OID_KP_TIME_STAMPING : constant Byte_Seq (0 .. 7) :=
+     (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#03#, 16#08#);
    --  id-kp-OCSPSigning 1.3.6.1.5.5.7.3.9 (RFC 6960 4.2.2.2)
    OID_KP_OCSP_SIGNING : constant Byte_Seq (0 .. 7) :=
      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#03#, 16#09#);
+   --  Precertificate Signing Certificate 1.3.6.1.4.1.11129.2.4.4
+   --  (RFC 6962 3.1; forbidden in a subscriber EKU by CA/B Forum TLS BR
+   --  7.1.2.7.10)
+   OID_CT_PRECERT_SIGNING : constant Byte_Seq (0 .. 9) :=
+     (16#2B#, 16#06#, 16#01#, 16#04#, 16#01#, 16#D6#, 16#79#,
+      16#02#, 16#04#, 16#04#);
    --  id-pe-tlsfeature 1.3.6.1.5.5.7.1.24 (RFC 7633, "must-staple")
    OID_TLS_FEATURE : constant Byte_Seq (0 .. 7) :=
      (16#2B#, 16#06#, 16#01#, 16#05#, 16#05#, 16#07#, 16#01#, 16#18#);
