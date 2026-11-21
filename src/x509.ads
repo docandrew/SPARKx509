@@ -355,6 +355,16 @@ is
    --  Check if the cert has EKU with id-kp-codeSigning (RFC 5280
    --  4.2.1.12, signing of downloadable executable code).
    function Has_EKU_Code_Signing (Cert : Certificate) return Boolean;
+   --  Check if the cert has EKU with id-kp-emailProtection (RFC 5280
+   --  4.2.1.12, email protection).
+   function Has_EKU_Email_Protection (Cert : Certificate) return Boolean;
+   --  Check if the cert has EKU with id-kp-timeStamping (RFC 5280
+   --  4.2.1.12, binding the hash of an object to a time).
+   function Has_EKU_Time_Stamping (Cert : Certificate) return Boolean;
+   --  Check if the cert has EKU with the Precertificate Signing
+   --  Certificate purpose 1.3.6.1.4.1.11129.2.4.4 (RFC 6962 3.1,
+   --  Certificate Transparency precertificate signing).
+   function Has_EKU_Precert_Signing (Cert : Certificate) return Boolean;
    function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean;
    function Has_EKU (Cert : Certificate) return Boolean;
    function Is_EKU_Critical (Cert : Certificate) return Boolean;
@@ -625,6 +635,9 @@ private
       EKU_Has_Client_Auth  : Boolean       := False;
       EKU_Has_OCSP_Signing : Boolean       := False;
       EKU_Has_Code_Signing : Boolean       := False;
+      EKU_Has_Email_Protection : Boolean   := False;
+      EKU_Has_Time_Stamping : Boolean      := False;
+      EKU_Has_Precert_Signing : Boolean    := False;
       EKU_Is_Critical      : Boolean       := False;
       Bad_CRL_DP           : Boolean       := False;
       SAN_Critical_With_Subject : Boolean  := False;

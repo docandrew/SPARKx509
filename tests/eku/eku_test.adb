@@ -49,11 +49,17 @@ procedure EKU_Test is
 
    Dir : constant String := CLI.Argument (1);
 
+   --  The expected value of every EKU getter.
    type Verdicts is record
-      Has_EKU      : Boolean;
-      Code_Signing : Boolean;
-      Server_Auth  : Boolean;
-      Any_Purpose  : Boolean;
+      Has_EKU          : Boolean := True;
+      Server_Auth      : Boolean := False;
+      Client_Auth      : Boolean := False;
+      Code_Signing     : Boolean := False;
+      Email_Protection : Boolean := False;
+      Time_Stamping    : Boolean := False;
+      OCSP_Signing     : Boolean := False;
+      Precert_Signing  : Boolean := False;
+      Any_Purpose      : Boolean := False;
    end record;
 
    type Allowed is array (X509.EKU_Purpose) of Boolean;
@@ -73,10 +79,20 @@ procedure EKU_Test is
          return;
       end if;
       Check (X509.Has_EKU (Cert) = Expect.Has_EKU, Name & ": Has_EKU");
-      Check (X509.Has_EKU_Code_Signing (Cert) = Expect.Code_Signing,
-             Name & ": Has_EKU_Code_Signing");
       Check (X509.Has_EKU_Server_Auth (Cert) = Expect.Server_Auth,
              Name & ": Has_EKU_Server_Auth");
+      Check (X509.Has_EKU_Client_Auth (Cert) = Expect.Client_Auth,
+             Name & ": Has_EKU_Client_Auth");
+      Check (X509.Has_EKU_Code_Signing (Cert) = Expect.Code_Signing,
+             Name & ": Has_EKU_Code_Signing");
+      Check (X509.Has_EKU_Email_Protection (Cert) = Expect.Email_Protection,
+             Name & ": Has_EKU_Email_Protection");
+      Check (X509.Has_EKU_Time_Stamping (Cert) = Expect.Time_Stamping,
+             Name & ": Has_EKU_Time_Stamping");
+      Check (X509.Has_EKU_OCSP_Signing (Cert) = Expect.OCSP_Signing,
+             Name & ": Has_EKU_OCSP_Signing");
+      Check (X509.Has_EKU_Precert_Signing (Cert) = Expect.Precert_Signing,
+             Name & ": Has_EKU_Precert_Signing");
       Check (X509.Has_EKU_Any_Purpose (Cert) = Expect.Any_Purpose,
              Name & ": Has_EKU_Any_Purpose");
       for P in X509.EKU_Purpose loop
@@ -94,6 +110,8 @@ procedure EKU_Test is
                                       others => False);
    TLS_Both    : constant Allowed := (X509.EKU_Code_Signing => False,
                                       others => True);
+   Server_Code : constant Allowed := (X509.EKU_Client_Auth => False,
+                                      others => True);
    Nothing     : constant Allowed := (others => False);
 begin
    if CLI.Argument_Count /= 1 then
@@ -102,22 +120,58 @@ begin
       return;
    end if;
 
-   Case_EKU ("leaf_code", (True, True, False, False), Code_Only);
-   Case_EKU ("leaf_code_crit", (True, True, False, False), Code_Only);
-   Case_EKU ("leaf_server", (True, False, True, False), Server_Only);
-   Case_EKU ("leaf_mixed", (True, True, True, False), Everything);
-   --  id-kp-OCSPSigning and id-kp-timeStamping differ from
-   --  id-kp-codeSigning only in the last arc.
-   Case_EKU ("leaf_ocsp", (True, False, False, False), Nothing);
-   Case_EKU ("leaf_timestamp", (True, False, False, False), Nothing);
+   Case_EKU ("leaf_code", (Code_Signing => True, others => <>), Code_Only);
+   Case_EKU ("leaf_code_crit", (Code_Signing => True, others => <>),
+             Code_Only);
+   Case_EKU ("leaf_server", (Server_Auth => True, others => <>),
+             Server_Only);
+   Case_EKU ("leaf_mixed",
+             (Server_Auth | Client_Auth | Code_Signing => True,
+              others => <>),
+             Everything);
+   --  id-kp-OCSPSigning, id-kp-timeStamping and id-kp-emailProtection
+   --  differ from id-kp-codeSigning only in the last arc.
+   Case_EKU ("leaf_ocsp", (OCSP_Signing => True, others => <>), Nothing);
+   Case_EKU ("leaf_timestamp", (Time_Stamping => True, others => <>),
+             Nothing);
+   Case_EKU ("leaf_email", (Email_Protection => True, others => <>),
+             Nothing);
+   --  Each purpose the CA/B Forum TLS BR 7.1.2.7.10 forbids in a
+   --  subscriber certificate, beside id-kp-serverAuth.
+   Case_EKU ("leaf_server_email",
+             (Server_Auth | Email_Protection => True, others => <>),
+             Server_Only);
+   Case_EKU ("leaf_server_time",
+             (Server_Auth | Time_Stamping => True, others => <>),
+             Server_Only);
+   Case_EKU ("leaf_server_ocsp",
+             (Server_Auth | OCSP_Signing => True, others => <>),
+             Server_Only);
+   Case_EKU ("leaf_server_code",
+             (Server_Auth | Code_Signing => True, others => <>),
+             Server_Code);
+   Case_EKU ("leaf_precert", (Precert_Signing => True, others => <>),
+             Nothing);
+   Case_EKU ("leaf_server_precert",
+             (Server_Auth | Precert_Signing => True, others => <>),
+             Server_Only);
+   --  The CT precertificate poison OID differs from Precertificate
+   --  Signing Certificate only in the last arc.
+   Case_EKU ("leaf_precert_poison", (others => <>), Nothing);
+   Case_EKU ("leaf_every",
+             (Server_Auth | Client_Auth | Code_Signing | Email_Protection
+                | Time_Stamping | OCSP_Signing | Precert_Signing => True,
+              others => <>),
+             Everything);
    --  anyExtendedKeyUsage is not id-kp-codeSigning: a leaf check that
    --  needs code signing must ask Has_EKU_Code_Signing.
-   Case_EKU ("leaf_any", (True, False, False, True), Everything);
-   Case_EKU ("leaf_none", (False, False, False, False), Everything);
-   Case_EKU ("ca_code", (True, True, False, False), Code_Only);
-   Case_EKU ("ca_server", (True, False, True, False), TLS_Both);
-   Case_EKU ("ca_any", (True, False, False, True), Everything);
-   Case_EKU ("ca_none", (False, False, False, False), Everything);
+   Case_EKU ("leaf_any", (Any_Purpose => True, others => <>), Everything);
+   Case_EKU ("leaf_none", (Has_EKU => False, others => <>), Everything);
+   Case_EKU ("ca_code", (Code_Signing => True, others => <>), Code_Only);
+   Case_EKU ("ca_server",
+             (Server_Auth | Client_Auth => True, others => <>), TLS_Both);
+   Case_EKU ("ca_any", (Any_Purpose => True, others => <>), Everything);
+   Case_EKU ("ca_none", (Has_EKU => False, others => <>), Everything);
 
    Ada.Text_IO.Put_Line
      ("eku:" & Natural'Image (Total - Failures) & " /" & Natural'Image (Total)
