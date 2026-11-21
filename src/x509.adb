@@ -459,6 +459,7 @@ is
          when EKU_Client_Auth  => return Issuer.EKU_Has_Client_Auth;
          when EKU_Any_Purpose  =>
             return Issuer.EKU_Has_Server_Auth or else Issuer.EKU_Has_Client_Auth;
+         when EKU_Code_Signing => return Issuer.EKU_Has_Code_Signing;
       end case;
    end Issuer_EKU_Allows_Signing;
 
@@ -469,6 +470,8 @@ is
      (Cert.EKU_Has_Client_Auth);
    function Has_EKU_OCSP_Signing (Cert : Certificate) return Boolean is
      (Cert.EKU_Has_OCSP_Signing);
+   function Has_EKU_Code_Signing (Cert : Certificate) return Boolean is
+     (Cert.EKU_Has_Code_Signing);
    function Must_Staple (Cert : Certificate) return Boolean is
      (Cert.Requires_Staple);
    function Subject_Public_Key_Bits (Cert : Certificate) return Span is

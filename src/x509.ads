@@ -329,7 +329,8 @@ is
 
    --  The purpose a chain is being validated for, as it applies to the
    --  EKU of the certificates along it.
-   type EKU_Purpose is (EKU_Server_Auth, EKU_Client_Auth, EKU_Any_Purpose);
+   type EKU_Purpose is
+     (EKU_Server_Auth, EKU_Client_Auth, EKU_Any_Purpose, EKU_Code_Signing);
 
    --  Check if the issuer's EKU (if present) is compatible with signing a
    --  certificate for Purpose. RFC 5280 §4.2.1.12 leaves EKU on CA
@@ -337,6 +338,9 @@ is
    --  it as a constraint that must carry the leaf's purpose (or
    --  anyExtendedKeyUsage) in every EKU-bearing intermediate. Absent EKU
    --  is unrestricted. EKU_Any_Purpose accepts either TLS purpose.
+   --  EKU_Code_Signing is not a TLS purpose: EKU_Any_Purpose never
+   --  admits it, and only id-kp-codeSigning (or anyExtendedKeyUsage)
+   --  on the issuer does.
    function Issuer_EKU_Allows_Signing
      (Issuer  : Certificate;
       Purpose : EKU_Purpose := EKU_Any_Purpose) return Boolean;
@@ -348,6 +352,9 @@ is
    --  Check if the cert has EKU with id-kp-OCSPSigning (RFC 6960 4.2.2.2,
    --  delegated OCSP responder).
    function Has_EKU_OCSP_Signing (Cert : Certificate) return Boolean;
+   --  Check if the cert has EKU with id-kp-codeSigning (RFC 5280
+   --  4.2.1.12, signing of downloadable executable code).
+   function Has_EKU_Code_Signing (Cert : Certificate) return Boolean;
    function Has_EKU_Any_Purpose (Cert : Certificate) return Boolean;
    function Has_EKU (Cert : Certificate) return Boolean;
    function Is_EKU_Critical (Cert : Certificate) return Boolean;
@@ -617,6 +624,7 @@ private
       EKU_Has_Server_Auth  : Boolean       := False;
       EKU_Has_Client_Auth  : Boolean       := False;
       EKU_Has_OCSP_Signing : Boolean       := False;
+      EKU_Has_Code_Signing : Boolean       := False;
       EKU_Is_Critical      : Boolean       := False;
       Bad_CRL_DP           : Boolean       := False;
       SAN_Critical_With_Subject : Boolean  := False;

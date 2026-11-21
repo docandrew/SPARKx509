@@ -8,7 +8,9 @@ nix develop --command bash ci/check.sh
 ```
 
 The wrapper also runs `tests/smoke/run.sh`, which builds a tiny test crate and
-parses a generated localhost DER certificate.
+parses a generated localhost DER certificate, and `tests/eku/run.sh`, which
+checks the extended key usage getters and `Issuer_EKU_Allows_Signing` against
+generated P-384 certificates.
 
 The broad x509-limbo validation suite is exercised from the sibling SPARKTLS
 repository, where path validation and WebPKI policy are tested end to end.
